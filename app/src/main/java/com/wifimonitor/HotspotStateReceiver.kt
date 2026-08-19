@@ -6,11 +6,6 @@ import android.content.Intent
 import android.net.wifi.WifiManager
 import android.os.Build
 
-/**
- * Nhận broadcast khi trạng thái Hotspot thay đổi.
- * Trên Android 9+, broadcast này vẫn hoạt động nhưng cần permission.
- * Đây là cơ chế phụ bên cạnh polling trong Service.
- */
 class HotspotStateReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -21,14 +16,8 @@ class HotspotStateReceiver : BroadcastReceiver() {
             WifiManager.WIFI_AP_STATE_DISABLED
         )
 
-        when (state) {
-            WifiManager.WIFI_AP_STATE_DISABLED -> {
-                // Hotspot vừa tắt - đảm bảo service đang chạy để gửi notification
-                ensureServiceRunning(context)
-            }
-            WifiManager.WIFI_AP_STATE_ENABLED -> {
-                // Hotspot bật lại - có thể cancel alert notification
-            }
+        if (state == WifiManager.WIFI_AP_STATE_DISABLED) {
+            ensureServiceRunning(context)
         }
     }
 
