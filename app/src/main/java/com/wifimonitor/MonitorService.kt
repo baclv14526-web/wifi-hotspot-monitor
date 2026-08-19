@@ -16,8 +16,8 @@ import androidx.core.app.NotificationCompat
 class MonitorService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
-    private var runnable: Runnable? = null
-    private var lastState: Boolean? = null
+    private var pollRunnable: Runnable? = null
+    private var lastHotspotOn: Boolean? = null
 
     companion object {
         var running = false
@@ -40,65 +40,71 @@ class MonitorService : Service() {
         running = true
         val intervalMin = intent?.getIntExtra(EXTRA_INTERVAL, DEFAULT_INTERVAL) ?: DEFAULT_INTERVAL
         startForeground(FG_ID, buildFgNotification(null))
-        scheduleCheck(intervalMin * 60 * 1000L)
+        startPolling(intervalMin * 60 * 1000L)
         return START_STICKY
     }
 
     override fun onDestroy() {
         running = false
-        runnable?.let { handler.removeCallbacks(it) }
+        pollRunnable?.let { handler.removeCallbacks(it) }
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent): IBinder? = null
 
-    private fun scheduleCheck(intervalMs: Long) {
-        runnable?.let { handler.removeCallbacks(it) }
-        runnable = object : Runnable {
+    // ── polling ──────────────────────────────────────────────────────
+
+    private fun startPolling(intervalMs: Long) {
+        pollRunnable?.let { handler.removeCallbacks(it) }
+        pollRunnable = object : Runnable {
             override fun run() {
-                check()
+                pollHotspot()
                 handler.postDelayed(this, intervalMs)
             }
         }
-        handler.postDelayed(runnable!!, 3000L)
+        handler.postDelayed(pollRunnable!!, 3000L)
     }
 
-    private fun check() {
-        val on = HotspotUtils.isEnabled(this)
+    private fun pollHotspot() {
+        val isOn = HotspotUtils.isEnabled(this)
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(FG_ID, buildFgNotification(on))
+        nm.notify(FG_ID, buildFgNotification(isOn))
 
-        if (lastState == true && !on) {
-            sendAlert(nm)
-        } else if (on) {
+        if (lastHotspotOn == true && !isOn) {
+            sendAlertNotification(nm)
+        } else if (isOn) {
             nm.cancel(ALERT_ID)
         }
-        lastState = on
+        lastHotspotOn = isOn
     }
 
-    private fun buildFgNotification(on: Boolean?): Notification {
-        val text = when (on) {
-            true -> "Hotspot dang BAT"
+    // ── notifications ────────────────────────────────────────────────
+
+    private fun buildFgNotification(isOn: Boolean?): Notification {
+        val text = when (isOn) {
+            true  -> "Hotspot dang BAT"
             false -> "Hotspot dang TAT"
-            null -> "Dang kiem tra..."
+            null  -> "Dang kiem tra..."
         }
         val pi = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        return NotificationCompat.Builder(this, CH_FG)
+        val builder = NotificationCompat.Builder(this, CH_FG)
             .setContentTitle("Giam sat Hotspot")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_share)
             .setContentIntent(pi)
             .setOngoing(true)
-            .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
-            .build()
+
+        builder.setSilent(true)
+
+        return builder.build()
     }
 
-    private fun sendAlert(nm: NotificationManager) {
+    private fun sendAlertNotification(nm: NotificationManager) {
         val pi = PendingIntent.getActivity(
             this, 10,
             Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS).apply {
@@ -128,11 +134,14 @@ class MonitorService : Service() {
                     .apply { setShowBadge(false) }
             )
             nm.createNotificationChannel(
-                NotificationChannel(CH_ALERT, "Canh bao Hotspot tat", NotificationManager.IMPORTANCE_HIGH)
-                    .apply {
-                        enableVibration(true)
-                        enableLights(true)
-                    }
+                NotificationChannel(
+                    CH_ALERT,
+                    "Canh bao Hotspot tat",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    enableVibration(true)
+                    enableLights(true)
+                }
             )
         }
     }
