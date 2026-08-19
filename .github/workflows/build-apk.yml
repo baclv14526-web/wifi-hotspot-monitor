@@ -13,24 +13,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Setup JDK 17
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      # 3. Setup Gradle đúng chuẩn (không cần gradlew hay jar trong repo)
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.4'
 
-      # 4. Cache Gradle dependencies
       - name: Cache Gradle packages
         uses: actions/cache@v4
         with:
@@ -41,15 +37,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # 5. Build Debug APK
       - name: Build Debug APK
-        run: gradle assembleDebug --stacktrace
+        run: |
+          gradle assembleDebug 2>&1 | tee build.log || {
+            echo "====== KOTLIN ERRORS ======"
+            grep -E "^e:|error:|\.kt:[0-9]" build.log || grep -A3 "Compilation error" build.log
+            exit 1
+          }
 
-      # 6. Build Release APK (unsigned - dùng debug keystore)
       - name: Build Release APK
         run: gradle assembleRelease --stacktrace
 
-      # 7. Upload Debug APK artifact
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -57,7 +55,6 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-      # 8. Upload Release APK artifact
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
@@ -65,7 +62,14 @@ jobs:
           path: app/build/outputs/apk/release/app-release*.apk
           retention-days: 30
 
-      # 9. Tạo GitHub Release tự động khi push tag vX.X.X
+      - name: Upload full build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
+
       - name: Get APK info
         if: startsWith(github.ref, 'refs/tags/v')
         id: apk_info
@@ -82,21 +86,10 @@ jobs:
           name: "WiFi Hotspot Monitor ${{ steps.apk_info.outputs.tag }}"
           body: |
             ## 📲 Cài đặt
-
-            1. Tải file **APK** bên dưới về điện thoại Oppo/Realme
-            2. Mở file APK để cài đặt (cần bật "Cài từ nguồn không rõ")
-            3. Mở app → nhấn **"Bắt đầu giám sát"**
-            4. Vào phần **"Tắt tối ưu pin"** để app chạy ổn định trên ColorOS
-
-            ## 📋 Yêu cầu
-            - Android 9.0 (Pie) trở lên
-            - Oppo / Realme (ColorOS) được hỗ trợ tốt nhất
-
-            ## 🔧 Tính năng
-            - Kiểm tra Hotspot theo chu kỳ (1–60 phút)
-            - Gửi thông báo ngay khi Hotspot bị tắt
-            - Nút tắt nhanh vào cài đặt Hotspot
-            - Tự khởi động sau khi reboot
+            1. Tải APK bên dưới về điện thoại
+            2. Mở APK để cài (cần bật "Cài từ nguồn không rõ")
+            3. Mở app → nhấn "Bắt đầu giám sát"
+            4. Nhấn "Tắt tối ưu pin" để app ổn định trên ColorOS
           files: |
             ${{ steps.apk_info.outputs.debug_apk }}
             ${{ steps.apk_info.outputs.release_apk }}
