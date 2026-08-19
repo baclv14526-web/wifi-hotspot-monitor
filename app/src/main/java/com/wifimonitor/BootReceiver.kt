@@ -5,32 +5,22 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 
-/**
- * Tự động khởi động lại service sau khi thiết bị reboot.
- * Hoạt động trên cả Oppo/Realme ColorOS.
- */
 class BootReceiver : BroadcastReceiver() {
-
     override fun onReceive(context: Context, intent: Intent) {
-        val validActions = setOf(
-            Intent.ACTION_BOOT_COMPLETED,
-            "android.intent.action.QUICKBOOT_POWERON",
-            "com.htc.intent.action.QUICKBOOT_POWERON"
-        )
+        val action = intent.action ?: return
+        if (action != Intent.ACTION_BOOT_COMPLETED &&
+            action != "android.intent.action.QUICKBOOT_POWERON") return
 
-        if (intent.action !in validActions) return
+        val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("auto_start", true)) return
 
-        // Kiểm tra người dùng có bật auto-start không
-        val prefs = context.getSharedPreferences("wifi_monitor_prefs", Context.MODE_PRIVATE)
-        val autoStart = prefs.getBoolean(MainActivity.PREF_AUTO_START, true)
-
-        if (autoStart) {
-            val serviceIntent = Intent(context, HotspotMonitorService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent)
-            } else {
-                context.startService(serviceIntent)
-            }
+        val si = Intent(context, MonitorService::class.java).apply {
+            putExtra(MonitorService.EXTRA_INTERVAL, prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL))
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(si)
+        } else {
+            context.startService(si)
         }
     }
 }

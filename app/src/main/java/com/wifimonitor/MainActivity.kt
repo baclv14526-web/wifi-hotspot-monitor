@@ -12,31 +12,24 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.google.android.material.slider.Slider
 import com.wifimonitor.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private val prefs by lazy { getSharedPreferences("wifi_monitor_prefs", MODE_PRIVATE) }
+    private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
 
-    private val notificationPermissionLauncher = registerForActivityResult(
+    private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) {
-            startMonitorService()
-        } else {
-            showPermissionDeniedDialog()
-        }
+        if (granted) startMonitor() else showPermDenied()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-
-        setupUI()
-        checkAndRequestPermissions()
+        setup()
     }
 
     override fun onResume() {
@@ -44,121 +37,118 @@ class MainActivity : AppCompatActivity() {
         updateUI()
     }
 
-    private fun setupUI() {
-        binding.btnToggleService.setOnClickListener {
-            if (HotspotMonitorService.isRunning) {
-                stopMonitorService()
-            } else {
-                checkAndRequestPermissions()
-            }
+    private fun setup() {
+        binding.btnToggle.setOnClickListener {
+            if (MonitorService.running) stopMonitor() else requestPermAndStart()
         }
 
-        binding.btnOpenHotspotSettings.setOnClickListener {
+        binding.btnSettings.setOnClickListener {
             openHotspotSettings()
         }
 
-        // Fix: dùng Slider.OnChangeListener đúng cách
-        binding.sliderInterval.addOnChangeListener(Slider.OnChangeListener { _, value, fromUser ->
-            if (fromUser) {
-                val minutes = value.toInt()
-                prefs.edit().putInt(PREF_INTERVAL_MINUTES, minutes).apply()
-                binding.tvIntervalValue.text = "$minutes phút"
-                if (HotspotMonitorService.isRunning) {
-                    restartService()
-                }
-            }
-        })
-
-        binding.switchAutoStart.setOnCheckedChangeListener { _, checked ->
-            prefs.edit().putBoolean(PREF_AUTO_START, checked).apply()
+        binding.btnBattery.setOnClickListener {
+            openBatterySettings()
         }
 
-        binding.btnBatteryOpt.setOnClickListener {
-            openBatteryOptimizationSettings()
+        binding.btnMinus.setOnClickListener {
+            val cur = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
+            if (cur > 1) {
+                prefs.edit().putInt("interval", cur - 1).apply()
+                updateUI()
+            }
+        }
+
+        binding.btnPlus.setOnClickListener {
+            val cur = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
+            if (cur < 60) {
+                prefs.edit().putInt("interval", cur + 1).apply()
+                updateUI()
+            }
+        }
+
+        binding.switchAutoStart.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean("auto_start", checked).apply()
         }
     }
 
     private fun updateUI() {
-        val isRunning = HotspotMonitorService.isRunning
-        binding.btnToggleService.text = if (isRunning) "Dừng giám sát" else "Bắt đầu giám sát"
-        binding.btnToggleService.setBackgroundColor(
-            ContextCompat.getColor(this, if (isRunning) R.color.colorStop else R.color.colorStart)
-        )
-        binding.tvServiceStatus.text = if (isRunning) "🟢 Đang chạy nền" else "🔴 Đã dừng"
+        val running = MonitorService.running
+        binding.btnToggle.text = if (running) "Dung giam sat" else "Bat dau giam sat"
+        binding.tvStatus.text = if (running) "Dang chay nen" else "Da dung"
 
-        val savedInterval = prefs.getInt(PREF_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES)
-        binding.sliderInterval.value = savedInterval.toFloat()
-        binding.tvIntervalValue.text = "$savedInterval phút"
-        binding.switchAutoStart.isChecked = prefs.getBoolean(PREF_AUTO_START, true)
+        val interval = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
+        binding.tvInterval.text = "$interval phut"
+        binding.switchAutoStart.isChecked = prefs.getBoolean("auto_start", true)
 
-        val hotspotOn = HotspotUtils.isHotspotEnabled(this)
-        binding.tvHotspotStatus.text = if (hotspotOn) "📶 Hotspot: BẬT" else "📵 Hotspot: TẮT"
+        val hotspot = HotspotUtils.isEnabled(this)
+        binding.tvHotspot.text = if (hotspot) "Hotspot: BAT" else "Hotspot: TAT"
     }
 
-    private fun checkAndRequestPermissions() {
+    private fun requestPermAndStart() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             when {
-                ContextCompat.checkSelfPermission(
-                    this, Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED -> startMonitorService()
-
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    == PackageManager.PERMISSION_GRANTED -> startMonitor()
                 shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) ->
-                    showNotificationRationaleDialog()
-
-                else -> notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    AlertDialog.Builder(this)
+                        .setTitle("Can quyen thong bao")
+                        .setMessage("App can quyen gui thong bao de nhac bat Hotspot.")
+                        .setPositiveButton("Cap quyen") { _, _ ->
+                            permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                        .setNegativeButton("Huy") { d, _ -> d.dismiss() }
+                        .show()
+                else -> permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         } else {
-            startMonitorService()
+            startMonitor()
         }
     }
 
-    private fun startMonitorService() {
-        val intent = Intent(this, HotspotMonitorService::class.java)
+    private fun startMonitor() {
+        val si = Intent(this, MonitorService::class.java).apply {
+            putExtra(MonitorService.EXTRA_INTERVAL, prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL))
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
+            startForegroundService(si)
         } else {
-            startService(intent)
+            startService(si)
         }
-        Toast.makeText(this, "Đã bắt đầu giám sát Hotspot", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Da bat dau giam sat", Toast.LENGTH_SHORT).show()
         updateUI()
     }
 
-    private fun stopMonitorService() {
-        stopService(Intent(this, HotspotMonitorService::class.java))
-        Toast.makeText(this, "Đã dừng giám sát", Toast.LENGTH_SHORT).show()
+    private fun stopMonitor() {
+        stopService(Intent(this, MonitorService::class.java))
+        Toast.makeText(this, "Da dung", Toast.LENGTH_SHORT).show()
         updateUI()
-    }
-
-    private fun restartService() {
-        stopMonitorService()
-        startMonitorService()
     }
 
     private fun openHotspotSettings() {
         val intents = listOf(
             Intent().apply {
-                action = Intent.ACTION_MAIN
                 setClassName("com.android.settings", "com.android.settings.TetherSettings")
             },
-            Intent(Settings.ACTION_WIRELESS_SETTINGS),
-            Intent(Settings.ACTION_SETTINGS)
+            Intent(Settings.ACTION_WIRELESS_SETTINGS)
         )
-        for (intent in intents) {
+        for (i in intents) {
             try {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(intent)
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(i)
                 return
             } catch (e: Exception) {
-                // thử intent tiếp theo
+                // try next
             }
         }
     }
 
-    private fun openBatteryOptimizationSettings() {
+    private fun openBatterySettings() {
         try {
-            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
-            })
+            startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+            )
         } catch (e: Exception) {
             try {
                 startActivity(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS))
@@ -168,33 +158,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showNotificationRationaleDialog() {
+    private fun showPermDenied() {
         AlertDialog.Builder(this)
-            .setTitle("Cần quyền thông báo")
-            .setMessage("Ứng dụng cần quyền gửi thông báo để nhắc bạn bật Hotspot khi bị tắt.")
-            .setPositiveButton("Cho phép") { _, _ ->
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            .setTitle("Bi tu choi quyen")
+            .setMessage("Vao Cai dat de cap quyen Thong bao.")
+            .setPositiveButton("Mo Cai dat") { _, _ ->
+                startActivity(
+                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                        putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    }
+                )
             }
-            .setNegativeButton("Từ chối") { dialog, _ -> dialog.dismiss() }
+            .setNegativeButton("Dong") { d, _ -> d.dismiss() }
             .show()
-    }
-
-    private fun showPermissionDeniedDialog() {
-        AlertDialog.Builder(this)
-            .setTitle("Quyền bị từ chối")
-            .setMessage("Không có quyền thông báo. Vào Cài đặt để cấp quyền.")
-            .setPositiveButton("Mở Cài đặt") { _, _ ->
-                startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                })
-            }
-            .setNegativeButton("Đóng") { dialog, _ -> dialog.dismiss() }
-            .show()
-    }
-
-    companion object {
-        const val PREF_INTERVAL_MINUTES = "interval_minutes"
-        const val PREF_AUTO_START = "auto_start"
-        const val DEFAULT_INTERVAL_MINUTES = 5
     }
 }

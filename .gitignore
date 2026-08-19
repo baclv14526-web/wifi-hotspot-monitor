@@ -5,9 +5,5 @@
 .DS_Store
 /build
 /captures
-.externalNativeBuild
-.cxx
+app/build/
 local.properties
-
-# APK outputs (chỉ giữ trong GitHub Releases)
-app/build/outputs/

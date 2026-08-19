@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">WiFi Hotspot Monitor</string>
-    <string name="notification_channel_fg">Giám sát Hotspot (nền)</string>
-    <string name="notification_channel_alert">Cảnh báo Hotspot tắt</string>
 </resources>
