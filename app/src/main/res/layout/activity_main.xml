@@ -10,11 +10,11 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Title -->
+        <!-- Tiêu đề -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Giam sat Hotspot WiFi"
+            android:text="Giám sát Hotspot WiFi"
             android:textSize="22sp"
             android:textStyle="bold"
             android:textColor="#212121"
@@ -23,12 +23,12 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Tu dong nhac bat Hotspot khi bi tat"
+            android:text="Tự động nhắc bật Hotspot khi bị tắt"
             android:textSize="14sp"
             android:textColor="#757575"
             android:layout_marginBottom="20dp" />
 
-        <!-- Status card -->
+        <!-- Trạng thái -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -41,7 +41,7 @@
                 android:id="@+id/tvHotspot"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Hotspot: TAT"
+                android:text="📵 Hotspot: TẮT"
                 android:textSize="18sp"
                 android:textStyle="bold"
                 android:textColor="#212121"
@@ -51,31 +51,31 @@
                 android:id="@+id/tvStatus"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Da dung"
+                android:text="🔴 Đã dừng"
                 android:textSize="15sp"
                 android:textColor="#757575" />
 
         </LinearLayout>
 
-        <!-- Toggle button -->
+        <!-- Nút bật/tắt giám sát -->
         <Button
             android:id="@+id/btnToggle"
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:text="Bat dau giam sat"
+            android:text="Bắt đầu giám sát"
             android:textSize="16sp"
-            android:layout_marginBottom="12dp" />
+            android:layout_marginBottom="8dp" />
 
-        <!-- Hotspot settings button -->
+        <!-- Nút mở cài đặt Hotspot -->
         <Button
             android:id="@+id/btnSettings"
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:text="Mo cai dat Hotspot"
+            android:text="Mở cài đặt Hotspot"
             android:textSize="15sp"
             android:layout_marginBottom="20dp" />
 
-        <!-- Interval control -->
+        <!-- Chu kỳ kiểm tra -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -87,7 +87,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Kiem tra moi"
+                android:text="Kiểm tra mỗi"
                 android:textSize="14sp"
                 android:textColor="#757575"
                 android:layout_marginBottom="8dp" />
@@ -102,7 +102,7 @@
                     android:id="@+id/btnMinus"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
-                    android:text="-"
+                    android:text="−"
                     android:textSize="20sp" />
 
                 <TextView
@@ -110,7 +110,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="5 phut"
+                    android:text="5 phút"
                     android:textSize="18sp"
                     android:textStyle="bold"
                     android:textColor="#212121"
@@ -126,7 +126,7 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Auto start toggle -->
+        <!-- Tự khởi động -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -140,7 +140,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Tu khoi dong sau reboot"
+                android:text="Tự khởi động sau khi reboot"
                 android:textSize="15sp"
                 android:textColor="#212121" />
 
@@ -152,22 +152,21 @@
 
         </LinearLayout>
 
-        <!-- Battery optimization -->
+        <!-- Tối ưu pin -->
         <Button
             android:id="@+id/btnBattery"
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:text="Tat toi uu pin (Oppo/Realme)"
+            android:text="Tắt tối ưu pin (Oppo/Realme)"
             android:textSize="14sp"
             android:layout_marginBottom="12dp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Tren Oppo/Realme: vao Settings > App > WiFi Hotspot Monitor > Auto Launch > Bat ON"
+            android:text="Oppo/Realme: Vào Settings → Quản lý ứng dụng → WiFi Hotspot Monitor → Khởi động tự động → Bật"
             android:textSize="12sp"
-            android:textColor="#757575"
-            android:layout_marginBottom="8dp" />
+            android:textColor="#757575" />
 
     </LinearLayout>
 </ScrollView>

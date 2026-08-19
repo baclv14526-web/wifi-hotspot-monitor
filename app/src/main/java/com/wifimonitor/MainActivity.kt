@@ -41,14 +41,8 @@ class MainActivity : AppCompatActivity() {
         binding.btnToggle.setOnClickListener {
             if (MonitorService.running) stopMonitor() else requestPermAndStart()
         }
-
-        binding.btnSettings.setOnClickListener {
-            openHotspotSettings()
-        }
-
-        binding.btnBattery.setOnClickListener {
-            openBatterySettings()
-        }
+        binding.btnSettings.setOnClickListener { openHotspotSettings() }
+        binding.btnBattery.setOnClickListener { openBatterySettings() }
 
         binding.btnMinus.setOnClickListener {
             val cur = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
@@ -57,7 +51,6 @@ class MainActivity : AppCompatActivity() {
                 updateUI()
             }
         }
-
         binding.btnPlus.setOnClickListener {
             val cur = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
             if (cur < 60) {
@@ -65,7 +58,6 @@ class MainActivity : AppCompatActivity() {
                 updateUI()
             }
         }
-
         binding.switchAutoStart.setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("auto_start", checked).apply()
         }
@@ -73,15 +65,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateUI() {
         val running = MonitorService.running
-        binding.btnToggle.text = if (running) "Dung giam sat" else "Bat dau giam sat"
-        binding.tvStatus.text = if (running) "Dang chay nen" else "Da dung"
+        binding.btnToggle.text = if (running) "Dừng giám sát" else "Bắt đầu giám sát"
+        binding.tvStatus.text = if (running) "🟢 Đang chạy nền" else "🔴 Đã dừng"
 
         val interval = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
-        binding.tvInterval.text = "$interval phut"
+        binding.tvInterval.text = "$interval phút"
         binding.switchAutoStart.isChecked = prefs.getBoolean("auto_start", true)
 
         val hotspot = HotspotUtils.isEnabled(this)
-        binding.tvHotspot.text = if (hotspot) "Hotspot: BAT" else "Hotspot: TAT"
+        binding.tvHotspot.text = if (hotspot) "📶 Hotspot: BẬT" else "📵 Hotspot: TẮT"
     }
 
     private fun requestPermAndStart() {
@@ -91,12 +83,12 @@ class MainActivity : AppCompatActivity() {
                     == PackageManager.PERMISSION_GRANTED -> startMonitor()
                 shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS) ->
                     AlertDialog.Builder(this)
-                        .setTitle("Can quyen thong bao")
-                        .setMessage("App can quyen gui thong bao de nhac bat Hotspot.")
-                        .setPositiveButton("Cap quyen") { _, _ ->
+                        .setTitle("Cần quyền thông báo")
+                        .setMessage("App cần quyền gửi thông báo để nhắc bật Hotspot khi bị tắt.")
+                        .setPositiveButton("Cấp quyền") { _, _ ->
                             permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
-                        .setNegativeButton("Huy") { d, _ -> d.dismiss() }
+                        .setNegativeButton("Huỷ") { d, _ -> d.dismiss() }
                         .show()
                 else -> permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
@@ -114,13 +106,13 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(si)
         }
-        Toast.makeText(this, "Da bat dau giam sat", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Đã bắt đầu giám sát", Toast.LENGTH_SHORT).show()
         updateUI()
     }
 
     private fun stopMonitor() {
         stopService(Intent(this, MonitorService::class.java))
-        Toast.makeText(this, "Da dung", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Đã dừng giám sát", Toast.LENGTH_SHORT).show()
         updateUI()
     }
 
@@ -137,7 +129,7 @@ class MainActivity : AppCompatActivity() {
                 startActivity(i)
                 return
             } catch (e: Exception) {
-                // try next
+                // thử intent tiếp theo
             }
         }
     }
@@ -160,16 +152,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun showPermDenied() {
         AlertDialog.Builder(this)
-            .setTitle("Bi tu choi quyen")
-            .setMessage("Vao Cai dat de cap quyen Thong bao.")
-            .setPositiveButton("Mo Cai dat") { _, _ ->
+            .setTitle("Bị từ chối quyền")
+            .setMessage("Vào Cài đặt để cấp quyền Thông báo cho app.")
+            .setPositiveButton("Mở Cài đặt") { _, _ ->
                 startActivity(
                     Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
                         putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
                     }
                 )
             }
-            .setNegativeButton("Dong") { d, _ -> d.dismiss() }
+            .setNegativeButton("Đóng") { d, _ -> d.dismiss() }
             .show()
     }
 }

@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -18,6 +20,7 @@ class MonitorService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var pollRunnable: Runnable? = null
     private var lastHotspotOn: Boolean? = null
+    private var alertCount = 0  // số lần đã cảnh báo
 
     companion object {
         var running = false
@@ -52,7 +55,7 @@ class MonitorService : Service() {
 
     override fun onBind(intent: Intent): IBinder? = null
 
-    // ── polling ──────────────────────────────────────────────────────
+    // ── Polling ──────────────────────────────────────────────────────
 
     private fun startPolling(intervalMs: Long) {
         pollRunnable?.let { handler.removeCallbacks(it) }
@@ -70,77 +73,107 @@ class MonitorService : Service() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(FG_ID, buildFgNotification(isOn))
 
-        if (lastHotspotOn == true && !isOn) {
-            sendAlertNotification(nm)
-        } else if (isOn) {
-            nm.cancel(ALERT_ID)
+        when {
+            // Hotspot vừa tắt hoặc vẫn đang tắt → tăng đếm và gửi alert
+            !isOn -> {
+                alertCount++
+                sendAlertNotification(nm, alertCount)
+            }
+            // Hotspot đang BẬT → xoá thông báo và reset đếm
+            isOn -> {
+                nm.cancel(ALERT_ID)
+                alertCount = 0
+            }
         }
         lastHotspotOn = isOn
     }
 
-    // ── notifications ────────────────────────────────────────────────
+    // ── Notifications ─────────────────────────────────────────────────
 
     private fun buildFgNotification(isOn: Boolean?): Notification {
         val text = when (isOn) {
-            true  -> "Hotspot dang BAT"
-            false -> "Hotspot dang TAT"
-            null  -> "Dang kiem tra..."
+            true  -> "Hotspot đang BẬT"
+            false -> "Hotspot đang TẮT"
+            null  -> "Đang kiểm tra..."
         }
         val pi = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val builder = NotificationCompat.Builder(this, CH_FG)
-            .setContentTitle("Giam sat Hotspot")
+        return NotificationCompat.Builder(this, CH_FG)
+            .setContentTitle("Giám sát Hotspot")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_share)
             .setContentIntent(pi)
             .setOngoing(true)
+            .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
-
-        builder.setSilent(true)
-
-        return builder.build()
+            .build()
     }
 
-    private fun sendAlertNotification(nm: NotificationManager) {
+    private fun sendAlertNotification(nm: NotificationManager, count: Int) {
+        val settingsIntent = Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
         val pi = PendingIntent.getActivity(
-            this, 10,
-            Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
+            this, 10, settingsIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+
+        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
         val n = NotificationCompat.Builder(this, CH_ALERT)
-            .setContentTitle("Hotspot WiFi da bi tat!")
-            .setContentText("Nhan de vao cai dat bat lai Hotspot.")
+            .setContentTitle("⚠️ Hotspot WiFi đã bị tắt! ($count)")
+            .setContentText("Nhấn để vào cài đặt bật lại Hotspot.")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText("Hotspot WiFi đang TẮT.\nNhấn \"Bật Hotspot\" để vào cài đặt và bật lại ngay.")
+                    .setSummaryText("Lần cảnh báo thứ $count")
+            )
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentIntent(pi)
-            .addAction(android.R.drawable.ic_menu_preferences, "Bat Hotspot", pi)
+            .addAction(android.R.drawable.ic_menu_preferences, "Bật Hotspot", pi)
             .setAutoCancel(false)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setVibrate(longArrayOf(0, 500, 200, 500))
+            .setPriority(NotificationCompat.PRIORITY_MAX)          // hiện đầu danh sách
+            .setCategory(NotificationCompat.CATEGORY_ALARM)        // hiện trên màn hình khóa
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)   // hiện đầy đủ trên lock screen
+            .setSound(soundUri)                                     // tiếng chuông
+            .setVibrate(longArrayOf(0, 400, 200, 400))
+            .setOnlyAlertOnce(false)                               // luôn kêu mỗi lần cập nhật
             .build()
+
         nm.notify(ALERT_ID, n)
     }
 
     private fun createChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+            // Channel nền — im lặng
             nm.createNotificationChannel(
-                NotificationChannel(CH_FG, "Giam sat nen", NotificationManager.IMPORTANCE_MIN)
+                NotificationChannel(CH_FG, "Giám sát nền", NotificationManager.IMPORTANCE_MIN)
                     .apply { setShowBadge(false) }
             )
+
+            // Channel alert — âm thanh + rung + hiện lock screen
+            val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val audioAttr = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+
             nm.createNotificationChannel(
                 NotificationChannel(
                     CH_ALERT,
-                    "Canh bao Hotspot tat",
+                    "Cảnh báo Hotspot tắt",
                     NotificationManager.IMPORTANCE_HIGH
                 ).apply {
                     enableVibration(true)
+                    vibrationPattern = longArrayOf(0, 400, 200, 400)
                     enableLights(true)
+                    setSound(soundUri, audioAttr)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 }
             )
         }
