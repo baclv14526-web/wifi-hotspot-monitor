@@ -34,6 +34,9 @@ class MonitorService : Service() {
         const val EXTRA_TRIGGER = "trigger"
         const val TRIGGER_SCHEDULE = "schedule"
         const val DEFAULT_INTERVAL = 5
+
+        // Tự động xóa notification sau 10 lần cảnh báo
+        const val MAX_ALERT_COUNT = 10
     }
 
     override fun onCreate() {
@@ -49,10 +52,8 @@ class MonitorService : Service() {
         startForeground(FG_ID, buildFgNotification(null))
 
         if (trigger == TRIGGER_SCHEDULE) {
-            // Kiểm tra ngay lập tức do lịch trình kích hoạt
             pollHotspot()
         } else {
-            // Polling bình thường theo interval
             startPolling(intervalMin * 60 * 1000L)
         }
         return START_STICKY
@@ -87,8 +88,21 @@ class MonitorService : Service() {
         when {
             !isOn -> {
                 alertCount++
-                sendAlertNotification(nm, alertCount)
+                when {
+                    // 1–9 lần: báo bình thường có âm thanh
+                    alertCount < MAX_ALERT_COUNT -> {
+                        sendAlertNotification(nm, alertCount, isFinal = false)
+                    }
+                    // Đúng lần thứ 10: báo lần cuối, im lặng, tự xóa sau 5 giây
+                    alertCount == MAX_ALERT_COUNT -> {
+                        sendAlertNotification(nm, alertCount, isFinal = true)
+                        handler.postDelayed({ nm.cancel(ALERT_ID) }, 5000L)
+                    }
+                    // Trên 10 lần: im lặng hoàn toàn
+                    else -> { }
+                }
             }
+            // Hotspot bật lại → xóa alert, reset đếm
             isOn -> {
                 nm.cancel(ALERT_ID)
                 alertCount = 0
@@ -102,7 +116,7 @@ class MonitorService : Service() {
     private fun buildFgNotification(isOn: Boolean?): Notification {
         val text = when (isOn) {
             true  -> "Hotspot đang BẬT"
-            false -> "Hotspot đang TẮT"
+            false -> "Hotspot đang TẮT — đã cảnh báo $alertCount lần"
             null  -> "Đang kiểm tra..."
         }
         val pi = PendingIntent.getActivity(
@@ -121,7 +135,7 @@ class MonitorService : Service() {
             .build()
     }
 
-    private fun sendAlertNotification(nm: NotificationManager, count: Int) {
+    private fun sendAlertNotification(nm: NotificationManager, count: Int, isFinal: Boolean) {
         val pi = PendingIntent.getActivity(
             this, 10,
             Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS).apply {
@@ -131,13 +145,23 @@ class MonitorService : Service() {
         )
         val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
-        val n = NotificationCompat.Builder(this, CH_ALERT)
-            .setContentTitle("⚠️ Hotspot WiFi đã bị tắt! ($count)")
+        val title = if (isFinal)
+            "⚠️ Hotspot TẮT — Đã ngừng nhắc ($count/$MAX_ALERT_COUNT)"
+        else
+            "⚠️ Hotspot WiFi đã bị tắt! ($count/$MAX_ALERT_COUNT)"
+
+        val bodyText = if (isFinal)
+            "Đã cảnh báo $MAX_ALERT_COUNT lần. Thông báo sẽ tự xóa sau 5 giây.\nNhấn để vào cài đặt bật lại Hotspot."
+        else
+            "Hotspot WiFi đang TẮT.\nNhấn \"Bật Hotspot\" để vào cài đặt và bật lại ngay."
+
+        val builder = NotificationCompat.Builder(this, CH_ALERT)
+            .setContentTitle(title)
             .setContentText("Nhấn để vào cài đặt bật lại Hotspot.")
             .setStyle(
                 NotificationCompat.BigTextStyle()
-                    .bigText("Hotspot WiFi đang TẮT.\nNhấn \"Bật Hotspot\" để vào cài đặt và bật lại ngay.")
-                    .setSummaryText("Lần cảnh báo thứ $count")
+                    .bigText(bodyText)
+                    .setSummaryText("Lần cảnh báo thứ $count / $MAX_ALERT_COUNT")
             )
             .setSmallIcon(R.drawable.ic_wifi_notify)
             .setContentIntent(pi)
@@ -146,12 +170,18 @@ class MonitorService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setSound(soundUri)
-            .setVibrate(longArrayOf(0, 400, 200, 400))
             .setOnlyAlertOnce(false)
-            .build()
 
-        nm.notify(ALERT_ID, n)
+        if (isFinal) {
+            // Lần cuối: không âm thanh, không rung
+            builder.setSilent(true)
+        } else {
+            builder
+                .setSound(soundUri)
+                .setVibrate(longArrayOf(0, 400, 200, 400))
+        }
+
+        nm.notify(ALERT_ID, builder.build())
     }
 
     private fun createChannels() {
