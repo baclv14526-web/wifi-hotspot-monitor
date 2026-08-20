@@ -13,10 +13,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Cần fetch toàn bộ history để bump version và commit lại
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -38,38 +34,17 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
           restore-keys: ${{ runner.os }}-gradle-
 
-      # Tự động tăng VERSION_PATCH lên 1 mỗi lần build
-      - name: Bump version patch
+      # Đọc version từ version.properties (không commit lại)
+      - name: Read version
         id: version
         run: |
-          # Đọc version hiện tại
           MAJOR=$(grep VERSION_MAJOR version.properties | cut -d= -f2)
           MINOR=$(grep VERSION_MINOR version.properties | cut -d= -f2)
           PATCH=$(grep VERSION_PATCH version.properties | cut -d= -f2)
-
-          # Tăng PATCH
-          NEW_PATCH=$((PATCH + 1))
-          VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
-
-          # Ghi lại version.properties
-          echo "VERSION_MAJOR=${MAJOR}" > version.properties
-          echo "VERSION_MINOR=${MINOR}" >> version.properties
-          echo "VERSION_PATCH=${NEW_PATCH}" >> version.properties
-
-          # Xuất ra output cho các bước sau
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "apk_name=wifi-monitor-${VERSION}-release.apk" >> $GITHUB_OUTPUT
-          echo "✅ Version bumped: ${MAJOR}.${MINOR}.${PATCH} → ${VERSION}"
-
-      # Commit version.properties đã tăng lên repo
-      - name: Commit bumped version
-        if: github.event_name != 'pull_request'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add version.properties
-          git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
-          git push
+          echo "✅ Version: ${VERSION}"
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug
@@ -82,7 +57,6 @@ jobs:
           echo "📦 APK files:"
           find app/build/outputs/apk -name "*.apk" | sort
 
-      # Upload artifact với tên file đúng
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
@@ -97,7 +71,6 @@ jobs:
           path: app/build/outputs/apk/debug/wifi-monitor-*-debug.apk
           retention-days: 7
 
-      # Tạo GitHub Release khi push tag v*
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
