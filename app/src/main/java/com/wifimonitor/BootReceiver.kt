@@ -14,6 +14,7 @@ class BootReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
         if (!prefs.getBoolean("auto_start", true)) return
 
+        // Khởi động lại service
         val si = Intent(context, MonitorService::class.java).apply {
             putExtra(MonitorService.EXTRA_INTERVAL, prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL))
         }
@@ -21,6 +22,11 @@ class BootReceiver : BroadcastReceiver() {
             context.startForegroundService(si)
         } else {
             context.startService(si)
+        }
+
+        // Restore lịch trình nếu đã bật trước khi reboot
+        if (prefs.getBoolean("schedule_enabled", false)) {
+            ScheduleReceiver.setupDailySchedule(context)
         }
     }
 }

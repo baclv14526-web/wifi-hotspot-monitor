@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F5F5F5">
+    android:background="#F0F4FF">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -10,32 +10,33 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- Tiêu đề -->
+        <!-- Header -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Giám sát Hotspot WiFi"
+            android:text="📶 Giám sát Hotspot WiFi"
             android:textSize="22sp"
             android:textStyle="bold"
-            android:textColor="#212121"
+            android:textColor="#1A237E"
             android:layout_marginBottom="4dp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Tự động nhắc bật Hotspot khi bị tắt"
-            android:textSize="14sp"
-            android:textColor="#757575"
-            android:layout_marginBottom="20dp" />
+            android:textSize="13sp"
+            android:textColor="#5C6BC0"
+            android:layout_marginBottom="16dp" />
 
-        <!-- Trạng thái -->
+        <!-- Status card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:background="#FFFFFF"
             android:padding="16dp"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            android:elevation="2dp">
 
             <TextView
                 android:id="@+id/tvHotspot"
@@ -45,19 +46,19 @@
                 android:textSize="18sp"
                 android:textStyle="bold"
                 android:textColor="#212121"
-                android:layout_marginBottom="6dp" />
+                android:layout_marginBottom="4dp" />
 
             <TextView
                 android:id="@+id/tvStatus"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="🔴 Đã dừng"
-                android:textSize="15sp"
+                android:textSize="14sp"
                 android:textColor="#757575" />
 
         </LinearLayout>
 
-        <!-- Nút bật/tắt giám sát -->
+        <!-- Buttons -->
         <Button
             android:id="@+id/btnToggle"
             android:layout_width="match_parent"
@@ -66,31 +67,32 @@
             android:textSize="16sp"
             android:layout_marginBottom="8dp" />
 
-        <!-- Nút mở cài đặt Hotspot -->
         <Button
             android:id="@+id/btnSettings"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:text="Mở cài đặt Hotspot"
-            android:textSize="15sp"
-            android:layout_marginBottom="20dp" />
+            android:layout_height="48dp"
+            android:text="⚙️ Mở cài đặt Hotspot"
+            android:textSize="14sp"
+            android:layout_marginBottom="16dp" />
 
-        <!-- Chu kỳ kiểm tra -->
+        <!-- Interval control -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:background="#FFFFFF"
             android:padding="16dp"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            android:elevation="2dp">
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Kiểm tra mỗi"
+                android:text="⏱ Kiểm tra theo chu kỳ"
                 android:textSize="14sp"
-                android:textColor="#757575"
-                android:layout_marginBottom="8dp" />
+                android:textStyle="bold"
+                android:textColor="#1A237E"
+                android:layout_marginBottom="10dp" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -100,10 +102,11 @@
 
                 <Button
                     android:id="@+id/btnMinus"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
                     android:text="−"
-                    android:textSize="20sp" />
+                    android:textSize="20sp"
+                    android:padding="0dp" />
 
                 <TextView
                     android:id="@+id/tvInterval"
@@ -111,62 +114,115 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:text="5 phút"
-                    android:textSize="18sp"
+                    android:textSize="17sp"
                     android:textStyle="bold"
                     android:textColor="#212121"
                     android:gravity="center" />
 
                 <Button
                     android:id="@+id/btnPlus"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
                     android:text="+"
-                    android:textSize="20sp" />
+                    android:textSize="20sp"
+                    android:padding="0dp" />
 
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Tự khởi động -->
+        <!-- Schedule card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
+            android:orientation="vertical"
             android:background="#FFFFFF"
             android:padding="16dp"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            android:elevation="2dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="📅 Kiểm tra theo lịch trình"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="#1A237E" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchSchedule"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+
+            </LinearLayout>
 
             <TextView
-                android:layout_width="0dp"
+                android:id="@+id/tvScheduleTimes"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Tự khởi động sau khi reboot"
-                android:textSize="15sp"
-                android:textColor="#212121" />
-
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/switchAutoStart"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:checked="true" />
+                android:text="7:00 SA  •  11:00 SA  •  4:00 CH  •  9:00 TỐI"
+                android:textSize="13sp"
+                android:textColor="#5C6BC0"
+                android:gravity="center" />
 
         </LinearLayout>
 
-        <!-- Tối ưu pin -->
-        <Button
-            android:id="@+id/btnBattery"
+        <!-- Auto start + Battery -->
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:text="Tắt tối ưu pin (Oppo/Realme)"
-            android:textSize="14sp"
-            android:layout_marginBottom="12dp" />
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#FFFFFF"
+            android:padding="16dp"
+            android:layout_marginBottom="12dp"
+            android:elevation="2dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="🔄 Tự khởi động sau reboot"
+                    android:textSize="14sp"
+                    android:textColor="#212121" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchAutoStart"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true" />
+
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btnBattery"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:text="🔋 Tắt tối ưu pin (Oppo/Realme)"
+                android:textSize="13sp" />
+
+        </LinearLayout>
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Oppo/Realme: Vào Settings → Quản lý ứng dụng → WiFi Hotspot Monitor → Khởi động tự động → Bật"
+            android:text="💡 Trên Oppo/Realme: vào Settings → App → WiFi Monitor → Auto Launch → BẬT"
             android:textSize="12sp"
-            android:textColor="#757575" />
+            android:textColor="#757575"
+            android:layout_marginBottom="8dp" />
 
     </LinearLayout>
 </ScrollView>

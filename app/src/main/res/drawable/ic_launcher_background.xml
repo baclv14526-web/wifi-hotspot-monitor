@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Nền màu xanh đậm hiện đại -->
+    <path
+        android:fillColor="#1565C0"
+        android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
+
+    <!-- Vòng tròn accent nhạt hơn góc trên phải -->
+    <path
+        android:fillColor="#1976D2"
+        android:pathData="M108,0 C108,0 85,0 85,25 C85,50 108,50 108,50 Z" />
+
+</vector>

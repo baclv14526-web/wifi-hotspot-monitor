@@ -61,6 +61,16 @@ class MainActivity : AppCompatActivity() {
         binding.switchAutoStart.setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("auto_start", checked).apply()
         }
+        binding.switchSchedule.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean("schedule_enabled", checked).apply()
+            if (checked) {
+                ScheduleReceiver.setupDailySchedule(this)
+                Toast.makeText(this, "Đã bật lịch kiểm tra tự động", Toast.LENGTH_SHORT).show()
+            } else {
+                ScheduleReceiver.cancelDailySchedule(this)
+                Toast.makeText(this, "Đã tắt lịch kiểm tra tự động", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun updateUI() {
@@ -71,9 +81,14 @@ class MainActivity : AppCompatActivity() {
         val interval = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
         binding.tvInterval.text = "$interval phút"
         binding.switchAutoStart.isChecked = prefs.getBoolean("auto_start", true)
+        binding.switchSchedule.isChecked = prefs.getBoolean("schedule_enabled", false)
 
         val hotspot = HotspotUtils.isEnabled(this)
         binding.tvHotspot.text = if (hotspot) "📶 Hotspot: BẬT" else "📵 Hotspot: TẮT"
+
+        // Hiển thị danh sách giờ lịch trình
+        val labels = ScheduleReceiver.scheduleLabels()
+        binding.tvScheduleTimes.text = labels.joinToString("  •  ")
     }
 
     private fun requestPermAndStart() {
@@ -105,6 +120,10 @@ class MainActivity : AppCompatActivity() {
             startForegroundService(si)
         } else {
             startService(si)
+        }
+        // Bật lịch trình nếu đã được bật trước đó
+        if (prefs.getBoolean("schedule_enabled", false)) {
+            ScheduleReceiver.setupDailySchedule(this)
         }
         Toast.makeText(this, "Đã bắt đầu giám sát", Toast.LENGTH_SHORT).show()
         updateUI()
