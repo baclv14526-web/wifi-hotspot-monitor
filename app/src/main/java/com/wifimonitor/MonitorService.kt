@@ -8,7 +8,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -21,6 +24,7 @@ class MonitorService : Service() {
     private var pollRunnable: Runnable? = null
     private var lastHotspotOn: Boolean? = null
     private var alertCount = 0
+    private var mediaPlayer: MediaPlayer? = null
 
     companion object {
         var running = false
@@ -33,10 +37,10 @@ class MonitorService : Service() {
         const val EXTRA_INTERVAL = "interval"
         const val EXTRA_TRIGGER = "trigger"
         const val TRIGGER_SCHEDULE = "schedule"
+        const val TRIGGER_SCHEDULE_MODE = "schedule_mode"
         const val DEFAULT_INTERVAL = 5
-
-        // Tự động xóa notification sau 10 lần cảnh báo
         const val MAX_ALERT_COUNT = 10
+        const val PREF_MP3_URI = "mp3_uri"
     }
 
     override fun onCreate() {
@@ -62,6 +66,7 @@ class MonitorService : Service() {
     override fun onDestroy() {
         running = false
         pollRunnable?.let { handler.removeCallbacks(it) }
+        stopMp3()
         super.onDestroy()
     }
 
@@ -89,26 +94,71 @@ class MonitorService : Service() {
             !isOn -> {
                 alertCount++
                 when {
-                    // 1–9 lần: báo bình thường có âm thanh
                     alertCount < MAX_ALERT_COUNT -> {
                         sendAlertNotification(nm, alertCount, isFinal = false)
+                        playMp3()
                     }
-                    // Đúng lần thứ 10: báo lần cuối, im lặng, tự xóa sau 5 giây
                     alertCount == MAX_ALERT_COUNT -> {
                         sendAlertNotification(nm, alertCount, isFinal = true)
+                        playMp3()
                         handler.postDelayed({ nm.cancel(ALERT_ID) }, 5000L)
                     }
-                    // Trên 10 lần: im lặng hoàn toàn
                     else -> { }
                 }
             }
-            // Hotspot bật lại → xóa alert, reset đếm
             isOn -> {
                 nm.cancel(ALERT_ID)
+                stopMp3()
                 alertCount = 0
             }
         }
         lastHotspotOn = isOn
+    }
+
+    // ── MP3 Player ───────────────────────────────────────────────────
+
+    private fun playMp3() {
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        val uriStr = prefs.getString(PREF_MP3_URI, null)
+
+        stopMp3()
+
+        try {
+            if (uriStr != null) {
+                // Phát file MP3 do người dùng chọn
+                val uri = Uri.parse(uriStr)
+                mediaPlayer = MediaPlayer().apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    setDataSource(applicationContext, uri)
+                    isLooping = false
+                    prepare()
+                    start()
+                    setOnCompletionListener { stopMp3() }
+                }
+            } else {
+                // Fallback: chuông mặc định nếu chưa chọn file
+                val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                val ringtone = RingtoneManager.getRingtone(applicationContext, ringtoneUri)
+                ringtone.play()
+            }
+        } catch (e: Exception) {
+            // Nếu lỗi đọc file thì bỏ qua, notification vẫn hiện
+        }
+    }
+
+    private fun stopMp3() {
+        try {
+            mediaPlayer?.apply {
+                if (isPlaying) stop()
+                release()
+            }
+        } catch (e: Exception) { }
+        mediaPlayer = null
     }
 
     // ── Notifications ─────────────────────────────────────────────────
@@ -143,7 +193,6 @@ class MonitorService : Service() {
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
         val title = if (isFinal)
             "⚠️ Hotspot TẮT — Đã ngừng nhắc ($count/$MAX_ALERT_COUNT)"
@@ -151,13 +200,16 @@ class MonitorService : Service() {
             "⚠️ Hotspot WiFi đã bị tắt! ($count/$MAX_ALERT_COUNT)"
 
         val bodyText = if (isFinal)
-            "Đã cảnh báo $MAX_ALERT_COUNT lần. Thông báo sẽ tự xóa sau 5 giây.\nNhấn để vào cài đặt bật lại Hotspot."
+            "Đã cảnh báo $MAX_ALERT_COUNT lần. Thông báo sẽ tự xóa sau 5 giây."
         else
             "Hotspot WiFi đang TẮT.\nNhấn \"Bật Hotspot\" để vào cài đặt và bật lại ngay."
 
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        val hasMp3 = prefs.getString(PREF_MP3_URI, null) != null
+
         val builder = NotificationCompat.Builder(this, CH_ALERT)
             .setContentTitle(title)
-            .setContentText("Nhấn để vào cài đặt bật lại Hotspot.")
+            .setContentText(if (hasMp3) "🎵 Đang phát nhạc cảnh báo..." else "Nhấn để vào cài đặt bật lại Hotspot.")
             .setStyle(
                 NotificationCompat.BigTextStyle()
                     .bigText(bodyText)
@@ -171,15 +223,9 @@ class MonitorService : Service() {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(false)
-
-        if (isFinal) {
-            // Lần cuối: không âm thanh, không rung
-            builder.setSilent(true)
-        } else {
-            builder
-                .setSound(soundUri)
-                .setVibrate(longArrayOf(0, 400, 200, 400))
-        }
+            // Notification im lặng vì MP3 tự phát riêng
+            .setSilent(true)
+            .setVibrate(longArrayOf(0, 400, 200, 400))
 
         nm.notify(ALERT_ID, builder.build())
     }
@@ -193,19 +239,12 @@ class MonitorService : Service() {
                     .apply { setShowBadge(false) }
             )
 
-            val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            val audioAttr = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-
             nm.createNotificationChannel(
                 NotificationChannel(CH_ALERT, "Cảnh báo Hotspot tắt", NotificationManager.IMPORTANCE_HIGH)
                     .apply {
                         enableVibration(true)
                         vibrationPattern = longArrayOf(0, 400, 200, 400)
                         enableLights(true)
-                        setSound(soundUri, audioAttr)
                         lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                     }
             )

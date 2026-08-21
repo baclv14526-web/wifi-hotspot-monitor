@@ -14,19 +14,30 @@ class BootReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
         if (!prefs.getBoolean("auto_start", true)) return
 
-        // Khởi động lại service
-        val si = Intent(context, MonitorService::class.java).apply {
-            putExtra(MonitorService.EXTRA_INTERVAL, prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL))
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(si)
-        } else {
-            context.startService(si)
-        }
+        val useSchedule = prefs.getBoolean("use_schedule", true)
 
-        // Restore lịch trình nếu đã bật trước khi reboot
-        if (prefs.getBoolean("schedule_enabled", false)) {
+        if (useSchedule) {
+            // Chế độ lịch trình: restore alarm + start service (foreground notification)
             ScheduleReceiver.setupDailySchedule(context)
+            val si = Intent(context, MonitorService::class.java).apply {
+                putExtra(MonitorService.EXTRA_TRIGGER, MonitorService.TRIGGER_SCHEDULE_MODE)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(si)
+            } else {
+                context.startService(si)
+            }
+        } else {
+            // Chế độ polling theo phút
+            val si = Intent(context, MonitorService::class.java).apply {
+                putExtra(MonitorService.EXTRA_INTERVAL,
+                    prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL))
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(si)
+            } else {
+                context.startService(si)
+            }
         }
     }
 }

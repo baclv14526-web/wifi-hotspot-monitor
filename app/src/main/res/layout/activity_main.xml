@@ -58,7 +58,7 @@
 
         </LinearLayout>
 
-        <!-- Buttons -->
+        <!-- Toggle button -->
         <Button
             android:id="@+id/btnToggle"
             android:layout_width="match_parent"
@@ -75,7 +75,7 @@
             android:textSize="14sp"
             android:layout_marginBottom="16dp" />
 
-        <!-- Interval control -->
+        <!-- Chế độ kiểm tra -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -88,90 +88,98 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="⏱ Kiểm tra theo chu kỳ"
+                android:text="Chế độ kiểm tra"
                 android:textSize="14sp"
                 android:textStyle="bold"
                 android:textColor="#1A237E"
-                android:layout_marginBottom="10dp" />
+                android:layout_marginBottom="12dp" />
 
-            <LinearLayout
+            <RadioGroup
+                android:id="@+id/radioGroup"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:orientation="vertical">
 
-                <Button
-                    android:id="@+id/btnMinus"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
-                    android:text="−"
-                    android:textSize="20sp"
-                    android:padding="0dp" />
-
-                <TextView
-                    android:id="@+id/tvInterval"
-                    android:layout_width="0dp"
+                <!-- Lịch trình cố định (mặc định) -->
+                <RadioButton
+                    android:id="@+id/radioSchedule"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="5 phút"
-                    android:textSize="17sp"
-                    android:textStyle="bold"
-                    android:textColor="#212121"
-                    android:gravity="center" />
-
-                <Button
-                    android:id="@+id/btnPlus"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
-                    android:text="+"
-                    android:textSize="20sp"
-                    android:padding="0dp" />
-
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- Schedule card -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="#FFFFFF"
-            android:padding="16dp"
-            android:layout_marginBottom="12dp"
-            android:elevation="2dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:layout_marginBottom="8dp">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="📅 Kiểm tra theo lịch trình"
+                    android:text="📅 Theo lịch trình cố định"
                     android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="#1A237E" />
+                    android:textColor="#212121"
+                    android:checked="true"
+                    android:layout_marginBottom="4dp" />
 
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/switchSchedule"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content" />
+                <!-- Info lịch trình — hiện khi chọn radioSchedule -->
+                <LinearLayout
+                    android:id="@+id/layoutScheduleInfo"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginStart="32dp"
+                    android:layout_marginBottom="12dp">
 
-            </LinearLayout>
+                    <TextView
+                        android:id="@+id/tvScheduleTimes"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="7:00 SA  •  11:00 SA  •  4:00 CH  •  9:00 TỐI"
+                        android:textSize="13sp"
+                        android:textColor="#5C6BC0" />
 
-            <TextView
-                android:id="@+id/tvScheduleTimes"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="7:00 SA  •  11:00 SA  •  4:00 CH  •  9:00 TỐI"
-                android:textSize="13sp"
-                android:textColor="#5C6BC0"
-                android:gravity="center" />
+                </LinearLayout>
 
+                <!-- Theo chu kỳ phút -->
+                <RadioButton
+                    android:id="@+id/radioInterval"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="⏱ Theo chu kỳ (phút)"
+                    android:textSize="14sp"
+                    android:textColor="#212121"
+                    android:layout_marginBottom="4dp" />
+
+                <!-- Điều chỉnh phút — hiện khi chọn radioInterval -->
+                <LinearLayout
+                    android:id="@+id/layoutInterval"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginStart="32dp"
+                    android:visibility="gone">
+
+                    <Button
+                        android:id="@+id/btnMinus"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:text="−"
+                        android:textSize="20sp"
+                        android:padding="0dp" />
+
+                    <TextView
+                        android:id="@+id/tvInterval"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="5 phút"
+                        android:textSize="17sp"
+                        android:textStyle="bold"
+                        android:textColor="#212121"
+                        android:gravity="center" />
+
+                    <Button
+                        android:id="@+id/btnPlus"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:text="+"
+                        android:textSize="20sp"
+                        android:padding="0dp" />
+
+                </LinearLayout>
+
+            </RadioGroup>
         </LinearLayout>
 
         <!-- Auto start + Battery -->
@@ -216,13 +224,68 @@
 
         </LinearLayout>
 
+
+        <!-- Nhạc cảnh báo -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#FFFFFF"
+            android:padding="16dp"
+            android:layout_marginBottom="12dp"
+            android:elevation="2dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="🎵 Nhạc cảnh báo"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="#1A237E"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:id="@+id/tvMp3Name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Chưa chọn — dùng chuông mặc định"
+                android:textSize="13sp"
+                android:textColor="#5C6BC0"
+                android:layout_marginBottom="10dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnPickMp3"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:text="Chọn file .mp3"
+                    android:textSize="13sp"
+                    android:layout_marginEnd="8dp" />
+
+                <Button
+                    android:id="@+id/btnClearMp3"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:text="Xóa"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+        </LinearLayout>
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="💡 Trên Oppo/Realme: vào Settings → App → WiFi Monitor → Auto Launch → BẬT"
+            android:text="💡 Trên Oppo/Realme: Settings → App → WiFi Monitor → Auto Launch → BẬT"
             android:textSize="12sp"
             android:textColor="#757575"
             android:layout_marginBottom="8dp" />
 
     </LinearLayout>
 </ScrollView>
+<!-- Nội dung được thêm bởi sed bên dưới -->

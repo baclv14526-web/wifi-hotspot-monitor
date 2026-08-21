@@ -6,7 +6,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.provider.Settings
+import android.widget.RadioGroup
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -19,10 +21,28 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val prefs by lazy { getSharedPreferences("prefs", MODE_PRIVATE) }
 
+    private var useSchedule: Boolean
+        get() = prefs.getBoolean("use_schedule", true)
+        set(v) = prefs.edit().putBoolean("use_schedule", v).apply()
+
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) startMonitor() else showPermDenied()
+    }
+
+    // Launcher chọn file MP3
+    private val mp3Launcher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        // Lưu persistent permission để đọc file sau khi app restart
+        contentResolver.takePersistableUriPermission(
+            uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+        )
+        prefs.edit().putString(MonitorService.PREF_MP3_URI, uri.toString()).apply()
+        updateMp3UI()
+        Toast.makeText(this, "Đã chọn file nhạc", Toast.LENGTH_SHORT).show()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,32 +64,44 @@ class MainActivity : AppCompatActivity() {
         binding.btnSettings.setOnClickListener { openHotspotSettings() }
         binding.btnBattery.setOnClickListener { openBatterySettings() }
 
+        binding.radioGroup.setOnCheckedChangeListener { _: RadioGroup, checkedId: Int ->
+            useSchedule = (checkedId == R.id.radioSchedule)
+            updateModeUI()
+            if (MonitorService.running) {
+                stopMonitor()
+                startMonitor()
+            }
+        }
+
         binding.btnMinus.setOnClickListener {
             val cur = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
             if (cur > 1) {
                 prefs.edit().putInt("interval", cur - 1).apply()
-                updateUI()
+                binding.tvInterval.text = "${cur - 1} phút"
             }
         }
         binding.btnPlus.setOnClickListener {
             val cur = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
             if (cur < 60) {
                 prefs.edit().putInt("interval", cur + 1).apply()
-                updateUI()
+                binding.tvInterval.text = "${cur + 1} phút"
             }
         }
+
         binding.switchAutoStart.setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("auto_start", checked).apply()
         }
-        binding.switchSchedule.setOnCheckedChangeListener { _, checked ->
-            prefs.edit().putBoolean("schedule_enabled", checked).apply()
-            if (checked) {
-                ScheduleReceiver.setupDailySchedule(this)
-                Toast.makeText(this, "Đã bật lịch kiểm tra tự động", Toast.LENGTH_SHORT).show()
-            } else {
-                ScheduleReceiver.cancelDailySchedule(this)
-                Toast.makeText(this, "Đã tắt lịch kiểm tra tự động", Toast.LENGTH_SHORT).show()
-            }
+
+        // Chọn file MP3
+        binding.btnPickMp3.setOnClickListener {
+            mp3Launcher.launch(arrayOf("audio/mpeg", "audio/*"))
+        }
+
+        // Xóa file MP3 đã chọn
+        binding.btnClearMp3.setOnClickListener {
+            prefs.edit().remove(MonitorService.PREF_MP3_URI).apply()
+            updateMp3UI()
+            Toast.makeText(this, "Đã xóa file nhạc, dùng chuông mặc định", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -78,17 +110,49 @@ class MainActivity : AppCompatActivity() {
         binding.btnToggle.text = if (running) "Dừng giám sát" else "Bắt đầu giám sát"
         binding.tvStatus.text = if (running) "🟢 Đang chạy nền" else "🔴 Đã dừng"
 
-        val interval = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
-        binding.tvInterval.text = "$interval phút"
-        binding.switchAutoStart.isChecked = prefs.getBoolean("auto_start", true)
-        binding.switchSchedule.isChecked = prefs.getBoolean("schedule_enabled", false)
-
         val hotspot = HotspotUtils.isEnabled(this)
         binding.tvHotspot.text = if (hotspot) "📶 Hotspot: BẬT" else "📵 Hotspot: TẮT"
 
-        // Hiển thị danh sách giờ lịch trình
-        val labels = ScheduleReceiver.scheduleLabels()
-        binding.tvScheduleTimes.text = labels.joinToString("  •  ")
+        binding.switchAutoStart.isChecked = prefs.getBoolean("auto_start", true)
+        binding.radioGroup.check(if (useSchedule) R.id.radioSchedule else R.id.radioInterval)
+
+        val interval = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
+        binding.tvInterval.text = "$interval phút"
+        binding.tvScheduleTimes.text = ScheduleReceiver.scheduleLabels().joinToString("  •  ")
+
+        updateModeUI()
+        updateMp3UI()
+    }
+
+    private fun updateModeUI() {
+        binding.layoutInterval.visibility =
+            if (useSchedule) android.view.View.GONE else android.view.View.VISIBLE
+        binding.layoutScheduleInfo.visibility =
+            if (useSchedule) android.view.View.VISIBLE else android.view.View.GONE
+    }
+
+    private fun updateMp3UI() {
+        val uriStr = prefs.getString(MonitorService.PREF_MP3_URI, null)
+        if (uriStr != null) {
+            val name = getFileName(Uri.parse(uriStr)) ?: "File đã chọn"
+            binding.tvMp3Name.text = "🎵 $name"
+            binding.btnClearMp3.visibility = android.view.View.VISIBLE
+        } else {
+            binding.tvMp3Name.text = "Chưa chọn — dùng chuông mặc định"
+            binding.btnClearMp3.visibility = android.view.View.GONE
+        }
+    }
+
+    private fun getFileName(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                cursor.moveToFirst()
+                cursor.getString(idx)
+            }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun requestPermAndStart() {
@@ -113,17 +177,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startMonitor() {
-        val si = Intent(this, MonitorService::class.java).apply {
-            putExtra(MonitorService.EXTRA_INTERVAL, prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL))
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(si)
-        } else {
-            startService(si)
-        }
-        // Bật lịch trình nếu đã được bật trước đó
-        if (prefs.getBoolean("schedule_enabled", false)) {
+        if (useSchedule) {
             ScheduleReceiver.setupDailySchedule(this)
+            val si = Intent(this, MonitorService::class.java).apply {
+                putExtra(MonitorService.EXTRA_TRIGGER, MonitorService.TRIGGER_SCHEDULE_MODE)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(si)
+            } else {
+                startService(si)
+            }
+        } else {
+            ScheduleReceiver.cancelDailySchedule(this)
+            val si = Intent(this, MonitorService::class.java).apply {
+                putExtra(MonitorService.EXTRA_INTERVAL, prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL))
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(si)
+            } else {
+                startService(si)
+            }
         }
         Toast.makeText(this, "Đã bắt đầu giám sát", Toast.LENGTH_SHORT).show()
         updateUI()
@@ -131,6 +204,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopMonitor() {
         stopService(Intent(this, MonitorService::class.java))
+        ScheduleReceiver.cancelDailySchedule(this)
         Toast.makeText(this, "Đã dừng giám sát", Toast.LENGTH_SHORT).show()
         updateUI()
     }
@@ -147,9 +221,7 @@ class MainActivity : AppCompatActivity() {
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(i)
                 return
-            } catch (e: Exception) {
-                // thử intent tiếp theo
-            }
+            } catch (e: Exception) { }
         }
     }
 
@@ -163,9 +235,7 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             try {
                 startActivity(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS))
-            } catch (e2: Exception) {
-                // ignore
-            }
+            } catch (e2: Exception) { }
         }
     }
 
