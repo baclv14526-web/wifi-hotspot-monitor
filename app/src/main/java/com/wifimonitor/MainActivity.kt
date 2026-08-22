@@ -25,21 +25,19 @@ class MainActivity : AppCompatActivity() {
         get() = prefs.getBoolean("use_schedule", true)
         set(v) = prefs.edit().putBoolean("use_schedule", v).apply()
 
+    private var batteryThreshold: Int
+        get() = prefs.getInt("battery_threshold", MonitorService.BATTERY_THRESHOLD)
+        set(v) = prefs.edit().putInt("battery_threshold", v).apply()
+
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) startMonitor() else showPermDenied()
-    }
+    ) { granted -> if (granted) startMonitor() else showPermDenied() }
 
-    // Launcher chọn file MP3
     private val mp3Launcher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) return@registerForActivityResult
-        // Lưu persistent permission để đọc file sau khi app restart
-        contentResolver.takePersistableUriPermission(
-            uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-        )
+        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         prefs.edit().putString(MonitorService.PREF_MP3_URI, uri.toString()).apply()
         updateMp3UI()
         Toast.makeText(this, "Đã chọn file nhạc", Toast.LENGTH_SHORT).show()
@@ -64,44 +62,52 @@ class MainActivity : AppCompatActivity() {
         binding.btnSettings.setOnClickListener { openHotspotSettings() }
         binding.btnBattery.setOnClickListener { openBatterySettings() }
 
+        // Chế độ kiểm tra hotspot
         binding.radioGroup.setOnCheckedChangeListener { _: RadioGroup, checkedId: Int ->
             useSchedule = (checkedId == R.id.radioSchedule)
             updateModeUI()
-            if (MonitorService.running) {
-                stopMonitor()
-                startMonitor()
-            }
+            if (MonitorService.running) { stopMonitor(); startMonitor() }
         }
 
         binding.btnMinus.setOnClickListener {
             val cur = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
-            if (cur > 1) {
-                prefs.edit().putInt("interval", cur - 1).apply()
-                binding.tvInterval.text = "${cur - 1} phút"
-            }
+            if (cur > 1) { prefs.edit().putInt("interval", cur - 1).apply(); binding.tvInterval.text = "${cur - 1} phút" }
         }
         binding.btnPlus.setOnClickListener {
             val cur = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
-            if (cur < 60) {
-                prefs.edit().putInt("interval", cur + 1).apply()
-                binding.tvInterval.text = "${cur + 1} phút"
-            }
+            if (cur < 60) { prefs.edit().putInt("interval", cur + 1).apply(); binding.tvInterval.text = "${cur + 1} phút" }
         }
 
         binding.switchAutoStart.setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("auto_start", checked).apply()
         }
 
-        // Chọn file MP3
+        // MP3
         binding.btnPickMp3.setOnClickListener {
             mp3Launcher.launch(arrayOf("audio/mpeg", "audio/*"))
         }
-
-        // Xóa file MP3 đã chọn
         binding.btnClearMp3.setOnClickListener {
             prefs.edit().remove(MonitorService.PREF_MP3_URI).apply()
             updateMp3UI()
-            Toast.makeText(this, "Đã xóa file nhạc, dùng chuông mặc định", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Đã xóa — dùng chuông mặc định", Toast.LENGTH_SHORT).show()
+        }
+
+        // Cảnh báo pin
+        binding.switchBatteryAlert.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean("battery_alert_enabled", checked).apply()
+            updateBatteryUI()
+        }
+        binding.btnBatteryMinus.setOnClickListener {
+            if (batteryThreshold > 5) {
+                batteryThreshold -= 5
+                updateBatteryUI()
+            }
+        }
+        binding.btnBatteryPlus.setOnClickListener {
+            if (batteryThreshold < 50) {
+                batteryThreshold += 5
+                updateBatteryUI()
+            }
         }
     }
 
@@ -122,6 +128,7 @@ class MainActivity : AppCompatActivity() {
 
         updateModeUI()
         updateMp3UI()
+        updateBatteryUI()
     }
 
     private fun updateModeUI() {
@@ -143,6 +150,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateBatteryUI() {
+        val enabled = prefs.getBoolean("battery_alert_enabled", true)
+        binding.switchBatteryAlert.isChecked = enabled
+        binding.tvBatteryThreshold.text = "$batteryThreshold%"
+        val alpha = if (enabled) 1.0f else 0.4f
+        binding.btnBatteryMinus.alpha = alpha
+        binding.btnBatteryPlus.alpha = alpha
+        binding.tvBatteryThreshold.alpha = alpha
+        binding.btnBatteryMinus.isEnabled = enabled
+        binding.btnBatteryPlus.isEnabled = enabled
+    }
+
     private fun getFileName(uri: Uri): String? {
         return try {
             contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -150,9 +169,7 @@ class MainActivity : AppCompatActivity() {
                 cursor.moveToFirst()
                 cursor.getString(idx)
             }
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     private fun requestPermAndStart() {
@@ -181,22 +198,20 @@ class MainActivity : AppCompatActivity() {
             ScheduleReceiver.setupDailySchedule(this)
             val si = Intent(this, MonitorService::class.java).apply {
                 putExtra(MonitorService.EXTRA_TRIGGER, MonitorService.TRIGGER_SCHEDULE_MODE)
+                putExtra("battery_threshold", batteryThreshold)
+                putExtra("battery_alert_enabled", prefs.getBoolean("battery_alert_enabled", true))
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(si)
-            } else {
-                startService(si)
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(si)
+            else startService(si)
         } else {
             ScheduleReceiver.cancelDailySchedule(this)
             val si = Intent(this, MonitorService::class.java).apply {
                 putExtra(MonitorService.EXTRA_INTERVAL, prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL))
+                putExtra("battery_threshold", batteryThreshold)
+                putExtra("battery_alert_enabled", prefs.getBoolean("battery_alert_enabled", true))
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(si)
-            } else {
-                startService(si)
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(si)
+            else startService(si)
         }
         Toast.makeText(this, "Đã bắt đầu giám sát", Toast.LENGTH_SHORT).show()
         updateUI()
@@ -211,31 +226,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun openHotspotSettings() {
         val intents = listOf(
-            Intent().apply {
-                setClassName("com.android.settings", "com.android.settings.TetherSettings")
-            },
+            Intent().apply { setClassName("com.android.settings", "com.android.settings.TetherSettings") },
             Intent(Settings.ACTION_WIRELESS_SETTINGS)
         )
         for (i in intents) {
-            try {
-                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(i)
-                return
-            } catch (e: Exception) { }
+            try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(i); return }
+            catch (e: Exception) { }
         }
     }
 
     private fun openBatterySettings() {
         try {
-            startActivity(
-                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-            )
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            })
         } catch (e: Exception) {
-            try {
-                startActivity(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS))
-            } catch (e2: Exception) { }
+            try { startActivity(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)) }
+            catch (e2: Exception) { }
         }
     }
 
@@ -244,11 +251,9 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Bị từ chối quyền")
             .setMessage("Vào Cài đặt để cấp quyền Thông báo cho app.")
             .setPositiveButton("Mở Cài đặt") { _, _ ->
-                startActivity(
-                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                        putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                    }
-                )
+                startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                })
             }
             .setNegativeButton("Đóng") { d, _ -> d.dismiss() }
             .show()
