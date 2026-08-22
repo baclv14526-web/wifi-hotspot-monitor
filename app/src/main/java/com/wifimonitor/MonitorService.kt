@@ -173,7 +173,7 @@ class MonitorService : Service() {
                     if (!batteryAlertSent) {
                         batteryAlertSent = true
                         sendBatteryAlert(percent)
-                        playMp3()
+                        playBatteryMp3()
                     }
                 } else if (percent > threshold || isCharging) {
                     batteryAlertSent = false
@@ -198,6 +198,35 @@ class MonitorService : Service() {
     private fun playMp3() {
         val uriStr = getSharedPreferences("prefs", Context.MODE_PRIVATE)
             .getString(PREF_MP3_URI, null)
+        stopMp3()
+        try {
+            if (uriStr != null) {
+                mediaPlayer = MediaPlayer().apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    setDataSource(applicationContext, Uri.parse(uriStr))
+                    isLooping = false
+                    prepare()
+                    start()
+                    setOnCompletionListener { stopMp3() }
+                }
+            } else {
+                val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                RingtoneManager.getRingtone(applicationContext, uri).play()
+            }
+        } catch (e: Exception) { }
+    }
+
+
+    private fun playBatteryMp3() {
+        // Ưu tiên file riêng cho pin, fallback về file hotspot, rồi chuông mặc định
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        val uriStr = prefs.getString(PREF_BATTERY_MP3_URI, null)
+            ?: prefs.getString(PREF_MP3_URI, null)
         stopMp3()
         try {
             if (uriStr != null) {
@@ -298,8 +327,9 @@ class MonitorService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val hasMp3 = getSharedPreferences("prefs", Context.MODE_PRIVATE)
-            .getString(PREF_MP3_URI, null) != null
+        val prefs2 = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        val hasMp3 = prefs2.getString(PREF_BATTERY_MP3_URI, null) != null
+            || prefs2.getString(PREF_MP3_URI, null) != null
 
         nm.notify(BATTERY_ALERT_ID, NotificationCompat.Builder(this, CH_BATTERY)
             .setContentTitle("🔋 Pin sắp hết — còn $percent%")

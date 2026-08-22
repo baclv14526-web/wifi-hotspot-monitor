@@ -43,6 +43,18 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Đã chọn file nhạc", Toast.LENGTH_SHORT).show()
     }
 
+
+    // Launcher chọn file MP3 riêng cho cảnh báo pin
+    private val batteryMp3Launcher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        prefs.edit().putString(MonitorService.PREF_BATTERY_MP3_URI, uri.toString()).apply()
+        updateBatteryMp3UI()
+        Toast.makeText(this, "Đã chọn nhạc cảnh báo pin", Toast.LENGTH_SHORT).show()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -109,6 +121,16 @@ class MainActivity : AppCompatActivity() {
                 updateBatteryUI()
             }
         }
+
+        // MP3 riêng cho cảnh báo pin
+        binding.btnPickBatteryMp3.setOnClickListener {
+            batteryMp3Launcher.launch(arrayOf("audio/mpeg", "audio/*"))
+        }
+        binding.btnClearBatteryMp3.setOnClickListener {
+            prefs.edit().remove(MonitorService.PREF_BATTERY_MP3_URI).apply()
+            updateBatteryMp3UI()
+            Toast.makeText(this, "Đã xóa — dùng nhạc Hotspot hoặc chuông mặc định", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun updateUI() {
@@ -129,6 +151,7 @@ class MainActivity : AppCompatActivity() {
         updateModeUI()
         updateMp3UI()
         updateBatteryUI()
+        updateBatteryMp3UI()
     }
 
     private fun updateModeUI() {
@@ -160,6 +183,19 @@ class MainActivity : AppCompatActivity() {
         binding.tvBatteryThreshold.alpha = alpha
         binding.btnBatteryMinus.isEnabled = enabled
         binding.btnBatteryPlus.isEnabled = enabled
+    }
+
+
+    private fun updateBatteryMp3UI() {
+        val uriStr = prefs.getString(MonitorService.PREF_BATTERY_MP3_URI, null)
+        if (uriStr != null) {
+            val name = getFileName(Uri.parse(uriStr)) ?: "File đã chọn"
+            binding.tvBatteryMp3Name.text = "🎵 $name"
+            binding.btnClearBatteryMp3.visibility = android.view.View.VISIBLE
+        } else {
+            binding.tvBatteryMp3Name.text = "Chưa chọn — dùng nhạc Hotspot hoặc chuông mặc định"
+            binding.btnClearBatteryMp3.visibility = android.view.View.GONE
+        }
     }
 
     private fun getFileName(uri: Uri): String? {

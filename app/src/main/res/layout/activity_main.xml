@@ -357,6 +357,53 @@
 
         </LinearLayout>
 
+            <!-- MP3 riêng cho cảnh báo pin -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="🎵 Nhạc cảnh báo pin"
+                android:textSize="13sp"
+                android:textColor="#5C6BC0"
+                android:textStyle="bold"
+                android:layout_marginTop="10dp"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:id="@+id/tvBatteryMp3Name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Chưa chọn — dùng nhạc Hotspot hoặc chuông mặc định"
+                android:textSize="12sp"
+                android:textColor="#757575"
+                android:layout_marginBottom="8dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnPickBatteryMp3"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:text="Chọn file .mp3"
+                    android:textSize="12sp"
+                    android:layout_marginEnd="8dp" />
+
+                <Button
+                    android:id="@+id/btnClearBatteryMp3"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:text="Xóa"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
