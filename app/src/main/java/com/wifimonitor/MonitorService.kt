@@ -27,8 +27,6 @@ class MonitorService : Service() {
     private var lastHotspotOn: Boolean? = null
     private var alertCount = 0
     private var mediaPlayer: MediaPlayer? = null
-
-    // Pin: tránh báo lặp lại khi pin vẫn ở mức thấp
     private var batteryAlertSent = false
     private var batteryReceiver: BroadcastReceiver? = null
 
@@ -44,12 +42,12 @@ class MonitorService : Service() {
         const val CH_BATTERY = "ch_battery"
         const val EXTRA_INTERVAL = "interval"
         const val EXTRA_TRIGGER = "trigger"
-        const val TRIGGER_SCHEDULE = "schedule"
-        const val TRIGGER_SCHEDULE_MODE = "schedule_mode"
+        const val TRIGGER_SCHEDULE = "schedule"      // ScheduleReceiver kích hoạt kiểm tra 1 lần
+        const val TRIGGER_SCHEDULE_MODE = "schedule_mode" // Chế độ lịch trình (chỉ giữ FG notification)
         const val DEFAULT_INTERVAL = 5
         const val MAX_ALERT_COUNT = 10
         const val PREF_MP3_URI = "mp3_uri"
-        const val BATTERY_THRESHOLD = 20  // % pin
+        const val BATTERY_THRESHOLD = 20
     }
 
     override fun onCreate() {
@@ -60,22 +58,43 @@ class MonitorService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         running = true
-        val intervalMin = intent?.getIntExtra(EXTRA_INTERVAL, DEFAULT_INTERVAL) ?: DEFAULT_INTERVAL
-        val trigger = intent?.getStringExtra(EXTRA_TRIGGER)
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
 
         startForeground(FG_ID, buildFgNotification(null))
 
-        if (trigger == TRIGGER_SCHEDULE) {
-            pollHotspot()
-        } else {
-            startPolling(intervalMin * 60 * 1000L)
+        // Đọc chế độ từ prefs (bền vững qua START_STICKY restart)
+        // intent có thể null khi Android restart service sau khi bị kill
+        val trigger = intent?.getStringExtra(EXTRA_TRIGGER)
+        val useSchedule = prefs.getBoolean("use_schedule", true)
+
+        when {
+            // ScheduleReceiver kích hoạt → kiểm tra 1 lần ngay lập tức
+            trigger == TRIGGER_SCHEDULE -> {
+                pollHotspot()
+                // Không startPolling — lịch trình do AlarmManager quản lý
+            }
+
+            // Chế độ lịch trình (start từ MainActivity hoặc restart sau kill)
+            useSchedule || trigger == TRIGGER_SCHEDULE_MODE -> {
+                // Chỉ giữ foreground notification, KHÔNG polling
+                // AlarmManager sẽ kích hoạt ScheduleReceiver đúng giờ
+                stopPolling()
+            }
+
+            // Chế độ theo phút (start từ MainActivity hoặc restart sau kill)
+            else -> {
+                val intervalMin = intent?.getIntExtra(EXTRA_INTERVAL, DEFAULT_INTERVAL)
+                    ?: prefs.getInt("interval", DEFAULT_INTERVAL)
+                startPolling(intervalMin * 60 * 1000L)
+            }
         }
+
         return START_STICKY
     }
 
     override fun onDestroy() {
         running = false
-        pollRunnable?.let { handler.removeCallbacks(it) }
+        stopPolling()
         stopMp3()
         unregisterBatteryReceiver()
         super.onDestroy()
@@ -83,65 +102,23 @@ class MonitorService : Service() {
 
     override fun onBind(intent: Intent): IBinder? = null
 
-    // ── Battery Receiver ─────────────────────────────────────────────
-
-    private fun registerBatteryReceiver() {
-        batteryReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-                if (level < 0 || scale <= 0) return
-
-                val percent = (level * 100 / scale)
-                val threshold = getSharedPreferences("prefs", Context.MODE_PRIVATE).getInt("battery_threshold", BATTERY_THRESHOLD)
-                val alertEnabled = getSharedPreferences("prefs", Context.MODE_PRIVATE).getBoolean("battery_alert_enabled", true)
-                val isCharging = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1).let {
-                    it == BatteryManager.BATTERY_STATUS_CHARGING ||
-                    it == BatteryManager.BATTERY_STATUS_FULL
-                }
-
-                if (percent <= threshold && !isCharging && alertEnabled) {
-                    if (!batteryAlertSent) {
-                        batteryAlertSent = true
-                        sendBatteryAlert(percent)
-                        playMp3()
-                    }
-                } else {
-                    // Pin đã sạc lên lại hoặc đang sạc → reset để báo lại lần sau
-                    if (percent > threshold || isCharging) {
-                        batteryAlertSent = false
-                        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                        nm.cancel(BATTERY_ALERT_ID)
-                    }
-                }
-
-                // Cập nhật foreground notification với % pin hiện tại
-                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                nm.notify(FG_ID, buildFgNotification(lastHotspotOn, percent))
-            }
-        }
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        registerReceiver(batteryReceiver, filter)
-    }
-
-    private fun unregisterBatteryReceiver() {
-        try {
-            batteryReceiver?.let { unregisterReceiver(it) }
-        } catch (e: Exception) { }
-        batteryReceiver = null
-    }
-
-    // ── Polling Hotspot ──────────────────────────────────────────────
+    // ── Polling ──────────────────────────────────────────────────────
 
     private fun startPolling(intervalMs: Long) {
-        pollRunnable?.let { handler.removeCallbacks(it) }
+        stopPolling()
         pollRunnable = object : Runnable {
             override fun run() {
                 pollHotspot()
                 handler.postDelayed(this, intervalMs)
             }
         }
+        // Kiểm tra ngay lập tức sau 3 giây
         handler.postDelayed(pollRunnable!!, 3000L)
+    }
+
+    private fun stopPolling() {
+        pollRunnable?.let { handler.removeCallbacks(it) }
+        pollRunnable = null
     }
 
     private fun pollHotspot() {
@@ -174,15 +151,56 @@ class MonitorService : Service() {
         lastHotspotOn = isOn
     }
 
+    // ── Battery Receiver ─────────────────────────────────────────────
+
+    private fun registerBatteryReceiver() {
+        batteryReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                if (level < 0 || scale <= 0) return
+
+                val percent = level * 100 / scale
+                val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+                val threshold = prefs.getInt("battery_threshold", BATTERY_THRESHOLD)
+                val alertEnabled = prefs.getBoolean("battery_alert_enabled", true)
+                val isCharging = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1).let {
+                    it == BatteryManager.BATTERY_STATUS_CHARGING ||
+                    it == BatteryManager.BATTERY_STATUS_FULL
+                }
+
+                if (percent <= threshold && !isCharging && alertEnabled) {
+                    if (!batteryAlertSent) {
+                        batteryAlertSent = true
+                        sendBatteryAlert(percent)
+                        playMp3()
+                    }
+                } else if (percent > threshold || isCharging) {
+                    batteryAlertSent = false
+                    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    nm.cancel(BATTERY_ALERT_ID)
+                }
+
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                nm.notify(FG_ID, buildFgNotification(lastHotspotOn, percent))
+            }
+        }
+        registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    }
+
+    private fun unregisterBatteryReceiver() {
+        try { batteryReceiver?.let { unregisterReceiver(it) } } catch (e: Exception) { }
+        batteryReceiver = null
+    }
+
     // ── MP3 Player ───────────────────────────────────────────────────
 
     private fun playMp3() {
-        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
-        val uriStr = prefs.getString(PREF_MP3_URI, null)
+        val uriStr = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+            .getString(PREF_MP3_URI, null)
         stopMp3()
         try {
             if (uriStr != null) {
-                val uri = Uri.parse(uriStr)
                 mediaPlayer = MediaPlayer().apply {
                     setAudioAttributes(
                         AudioAttributes.Builder()
@@ -190,33 +208,33 @@ class MonitorService : Service() {
                             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                             .build()
                     )
-                    setDataSource(applicationContext, uri)
+                    setDataSource(applicationContext, Uri.parse(uriStr))
                     isLooping = false
                     prepare()
                     start()
                     setOnCompletionListener { stopMp3() }
                 }
             } else {
-                val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                RingtoneManager.getRingtone(applicationContext, ringtoneUri).play()
+                val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                RingtoneManager.getRingtone(applicationContext, uri).play()
             }
         } catch (e: Exception) { }
     }
 
     private fun stopMp3() {
-        try {
-            mediaPlayer?.apply { if (isPlaying) stop(); release() }
-        } catch (e: Exception) { }
+        try { mediaPlayer?.apply { if (isPlaying) stop(); release() } } catch (e: Exception) { }
         mediaPlayer = null
     }
 
     // ── Notifications ─────────────────────────────────────────────────
 
     private fun buildFgNotification(isOn: Boolean?, battery: Int? = null): Notification {
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        val mode = if (prefs.getBoolean("use_schedule", true)) "Lịch trình" else "Theo phút"
         val hotspotText = when (isOn) {
             true  -> "Hotspot BẬT"
             false -> "Hotspot TẮT [$alertCount lần]"
-            null  -> "Đang kiểm tra..."
+            null  -> "Chờ kiểm tra..."
         }
         val batteryText = if (battery != null) " • 🔋$battery%" else ""
         val pi = PendingIntent.getActivity(
@@ -225,7 +243,7 @@ class MonitorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         return NotificationCompat.Builder(this, CH_FG)
-            .setContentTitle("Giám sát Hotspot")
+            .setContentTitle("Giám sát Hotspot [$mode]")
             .setContentText("$hotspotText$batteryText")
             .setSmallIcon(R.drawable.ic_wifi_notify)
             .setContentIntent(pi)
@@ -247,16 +265,14 @@ class MonitorService : Service() {
             "⚠️ Hotspot TẮT — Đã ngừng nhắc ($count/$MAX_ALERT_COUNT)"
         else
             "⚠️ Hotspot WiFi đã bị tắt! ($count/$MAX_ALERT_COUNT)"
-
         val body = if (isFinal)
             "Đã cảnh báo $MAX_ALERT_COUNT lần. Thông báo tự xóa sau 5 giây."
         else
             "Hotspot WiFi đang TẮT.\nNhấn \"Bật Hotspot\" để vào cài đặt và bật lại ngay."
-
         val hasMp3 = getSharedPreferences("prefs", Context.MODE_PRIVATE)
             .getString(PREF_MP3_URI, null) != null
 
-        val n = NotificationCompat.Builder(this, CH_ALERT)
+        nm.notify(ALERT_ID, NotificationCompat.Builder(this, CH_ALERT)
             .setContentTitle(title)
             .setContentText(if (hasMp3) "🎵 Đang phát nhạc cảnh báo..." else "Nhấn để vào cài đặt.")
             .setStyle(NotificationCompat.BigTextStyle().bigText(body)
@@ -272,8 +288,7 @@ class MonitorService : Service() {
             .setSilent(true)
             .setVibrate(longArrayOf(0, 400, 200, 400))
             .build()
-
-        nm.notify(ALERT_ID, n)
+        )
     }
 
     private fun sendBatteryAlert(percent: Int) {
@@ -286,7 +301,7 @@ class MonitorService : Service() {
         val hasMp3 = getSharedPreferences("prefs", Context.MODE_PRIVATE)
             .getString(PREF_MP3_URI, null) != null
 
-        val n = NotificationCompat.Builder(this, CH_BATTERY)
+        nm.notify(BATTERY_ALERT_ID, NotificationCompat.Builder(this, CH_BATTERY)
             .setContentTitle("🔋 Pin sắp hết — còn $percent%")
             .setContentText(if (hasMp3) "🎵 Đang phát nhạc cảnh báo..." else "Hãy cắm sạc ngay!")
             .setStyle(NotificationCompat.BigTextStyle()
@@ -301,14 +316,12 @@ class MonitorService : Service() {
             .setSilent(true)
             .setVibrate(longArrayOf(0, 400, 200, 400))
             .build()
-
-        nm.notify(BATTERY_ALERT_ID, n)
+        )
     }
 
     private fun createChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
             nm.createNotificationChannel(
                 NotificationChannel(CH_FG, "Giám sát nền", NotificationManager.IMPORTANCE_MIN)
                     .apply { setShowBadge(false) }
