@@ -62,6 +62,11 @@ class MonitorService : Service() {
 
         startForeground(FG_ID, buildFgNotification(null))
 
+        // Luôn dừng polling cũ TRƯỚC khi quyết định chế độ mới.
+        // Đây là điểm mấu chốt: đảm bảo không có runnable "theo phút" nào
+        // còn sót lại khi service chuyển sang chế độ "lịch trình" (hoặc ngược lại).
+        stopPolling()
+
         // Đọc chế độ từ prefs (bền vững qua START_STICKY restart)
         // intent có thể null khi Android restart service sau khi bị kill
         val trigger = intent?.getStringExtra(EXTRA_TRIGGER)
@@ -76,9 +81,9 @@ class MonitorService : Service() {
 
             // Chế độ lịch trình (start từ MainActivity hoặc restart sau kill)
             useSchedule || trigger == TRIGGER_SCHEDULE_MODE -> {
-                // Chỉ giữ foreground notification, KHÔNG polling
-                // AlarmManager sẽ kích hoạt ScheduleReceiver đúng giờ
-                stopPolling()
+                // Chỉ giữ foreground notification, KHÔNG polling.
+                // stopPolling() đã được gọi ở trên rồi, không cần gọi lại.
+                // AlarmManager sẽ kích hoạt ScheduleReceiver đúng giờ.
             }
 
             // Chế độ theo phút (start từ MainActivity hoặc restart sau kill)

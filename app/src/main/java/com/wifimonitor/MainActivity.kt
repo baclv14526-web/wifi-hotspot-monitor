@@ -29,6 +29,11 @@ class MainActivity : AppCompatActivity() {
         get() = prefs.getInt("battery_threshold", MonitorService.BATTERY_THRESHOLD)
         set(v) = prefs.edit().putInt("battery_threshold", v).apply()
 
+    // Cờ chặn listener của RadioGroup khi ta tự gọi check() để đồng bộ UI
+    // (nếu không có cờ này, mỗi lần updateUI() chạy sẽ vô tình kích hoạt lại
+    // listener và gây restart chế độ ngoài ý muốn người dùng)
+    private var isUpdatingUI = false
+
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) startMonitor() else showPermDenied() }
@@ -76,9 +81,24 @@ class MainActivity : AppCompatActivity() {
 
         // Chế độ kiểm tra hotspot
         binding.radioGroup.setOnCheckedChangeListener { _: RadioGroup, checkedId: Int ->
-            useSchedule = (checkedId == R.id.radioSchedule)
+            // Bỏ qua nếu đây là do updateUI() tự gọi check(), không phải người dùng bấm
+            if (isUpdatingUI) return@setOnCheckedChangeListener
+
+            val newUseSchedule = (checkedId == R.id.radioSchedule)
+            // Bỏ qua nếu chọn lại đúng chế độ đang dùng — không có gì thay đổi
+            if (newUseSchedule == useSchedule) return@setOnCheckedChangeListener
+
+            useSchedule = newUseSchedule
             updateModeUI()
-            if (MonitorService.running) { stopMonitor(); startMonitor() }
+
+            if (MonitorService.running) {
+                // QUAN TRỌNG: không gọi stopMonitor() rồi startMonitor() liên tiếp —
+                // stopService()+startForegroundService() gọi ngay sau nhau tạo race
+                // condition khiến polling "theo phút" cũ có thể không bị hủy kịp.
+                // Thay vào đó chỉ gửi lại 1 intent mới cho service đang chạy —
+                // onStartCommand sẽ tự stopPolling() rồi áp dụng đúng chế độ mới.
+                startMonitor()
+            }
         }
 
         binding.btnMinus.setOnClickListener {
@@ -142,7 +162,13 @@ class MainActivity : AppCompatActivity() {
         binding.tvHotspot.text = if (hotspot) "📶 Hotspot: BẬT" else "📵 Hotspot: TẮT"
 
         binding.switchAutoStart.isChecked = prefs.getBoolean("auto_start", true)
+
+        // Đặt cờ TRƯỚC khi gọi check() để listener của radioGroup biết đây là
+        // cập nhật do code gây ra, không phải người dùng bấm — tránh trigger
+        // lại logic đổi chế độ (nguyên nhân gây bug chạy nhầm chế độ)
+        isUpdatingUI = true
         binding.radioGroup.check(if (useSchedule) R.id.radioSchedule else R.id.radioInterval)
+        isUpdatingUI = false
 
         val interval = prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL)
         binding.tvInterval.text = "$interval phút"
