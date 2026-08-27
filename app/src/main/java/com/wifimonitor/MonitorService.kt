@@ -47,6 +47,7 @@ class MonitorService : Service() {
         const val DEFAULT_INTERVAL = 5
         const val MAX_ALERT_COUNT = 10
         const val PREF_MP3_URI = "mp3_uri"
+        const val PREF_BATTERY_MP3_URI = "battery_mp3_uri"
         const val BATTERY_THRESHOLD = 20
     }
 
