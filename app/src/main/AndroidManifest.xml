@@ -8,10 +8,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Cần cho AlarmManager.setExactAndAllowWhileIdle trên Android 12+ -->
+    <!-- Cần cho AlarmManager.setExactAndAllowWhileIdle trên Android 12+.
+         Từ Android 12+, người dùng có thể thu hồi quyền này trong Settings —
+         ScheduleReceiver đã xử lý fallback an toàn nếu bị thu hồi. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <!-- ACTION_BATTERY_CHANGED không cần permission, tự động được cấp -->
+    <!-- Cần cho AlarmRingService phát chuông báo thức (foregroundServiceType=mediaPlayback) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <application
         android:allowBackup="true"
@@ -59,6 +62,18 @@
                 <action android:name="com.wifimonitor.SCHEDULE_CHECK_3" />
             </intent-filter>
         </receiver>
+
+        <!-- Đồng hồ báo thức -->
+        <receiver
+            android:name=".AlarmClockReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <service
+            android:name=".AlarmRingService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
     </application>
 </manifest>

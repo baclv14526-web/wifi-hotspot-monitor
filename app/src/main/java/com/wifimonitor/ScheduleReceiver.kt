@@ -37,11 +37,41 @@ class ScheduleReceiver : BroadcastReceiver() {
             SCHEDULE_HOURS.forEachIndexed { index, hour ->
                 val pi = buildPendingIntent(context, index)
                 val triggerMs = nextTriggerMs(hour)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                } else {
-                    am.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                scheduleOne(am, triggerMs, pi)
+            }
+        }
+
+        /**
+         * Đặt 1 alarm, có kiểm tra quyền và fallback an toàn.
+         * FIX QUAN TRỌNG: setExactAndAllowWhileIdle() có thể ném SecurityException
+         * nếu người dùng thu hồi quyền "Alarms & reminders" trong Settings (Android 12+).
+         * Nếu không bắt lỗi này, app sẽ crash ngay khi bật chế độ lịch trình.
+         */
+        private fun scheduleOne(am: AlarmManager, triggerMs: Long, pi: PendingIntent) {
+            try {
+                when {
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                        // Android 12+: phải kiểm tra quyền exact alarm trước khi gọi
+                        if (am.canScheduleExactAlarms()) {
+                            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                        } else {
+                            // Không có quyền → dùng lịch không chính xác thay thế,
+                            // vẫn hoạt động, chỉ có thể trễ vài phút
+                            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                        }
+                    }
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
+                        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                    }
+                    else -> {
+                        am.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                    }
                 }
+            } catch (e: SecurityException) {
+                // Fallback cuối cùng nếu quyền bị thu hồi đột ngột giữa lúc chạy
+                try { am.set(AlarmManager.RTC_WAKEUP, triggerMs, pi) } catch (e2: Exception) { }
+            } catch (e: Exception) {
+                // Không để bất kỳ lỗi AlarmManager nào làm crash app
             }
         }
 

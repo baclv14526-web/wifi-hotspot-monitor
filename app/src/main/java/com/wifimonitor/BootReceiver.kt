@@ -12,6 +12,10 @@ class BootReceiver : BroadcastReceiver() {
             action != "android.intent.action.QUICKBOOT_POWERON") return
 
         val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
+
+        // Khôi phục báo thức nếu đã bật — độc lập với cài đặt auto_start của Hotspot monitor
+        AlarmClockReceiver.restoreIfEnabled(context)
+
         if (!prefs.getBoolean("auto_start", true)) return
 
         val useSchedule = prefs.getBoolean("use_schedule", true)

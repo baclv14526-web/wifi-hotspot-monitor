@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 
 class MonitorService : Service() {
 
@@ -191,7 +192,16 @@ class MonitorService : Service() {
                 nm.notify(FG_ID, buildFgNotification(lastHotspotOn, percent))
             }
         }
-        registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        // FIX QUAN TRỌNG: từ Android 13+ (targetSdk 34), registerReceiver() bắt buộc
+        // phải chỉ định rõ RECEIVER_EXPORTED hoặc RECEIVER_NOT_EXPORTED, nếu không
+        // sẽ crash với SecurityException ngay khi service khởi động.
+        // ContextCompat.registerReceiver tự xử lý đúng cho mọi phiên bản Android.
+        ContextCompat.registerReceiver(
+            this,
+            batteryReceiver,
+            IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
     private fun unregisterBatteryReceiver() {
@@ -204,56 +214,59 @@ class MonitorService : Service() {
     private fun playMp3() {
         val uriStr = getSharedPreferences("prefs", Context.MODE_PRIVATE)
             .getString(PREF_MP3_URI, null)
-        stopMp3()
-        try {
-            if (uriStr != null) {
-                mediaPlayer = MediaPlayer().apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ALARM)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build()
-                    )
-                    setDataSource(applicationContext, Uri.parse(uriStr))
-                    isLooping = false
-                    prepare()
-                    start()
-                    setOnCompletionListener { stopMp3() }
-                }
-            } else {
-                val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                RingtoneManager.getRingtone(applicationContext, uri).play()
-            }
-        } catch (e: Exception) { }
+        playUriOrDefaultRingtone(uriStr)
     }
-
 
     private fun playBatteryMp3() {
         // Ưu tiên file riêng cho pin, fallback về file hotspot, rồi chuông mặc định
         val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
         val uriStr = prefs.getString(PREF_BATTERY_MP3_URI, null)
             ?: prefs.getString(PREF_MP3_URI, null)
+        playUriOrDefaultRingtone(uriStr)
+    }
+
+    /**
+     * Phát 1 file âm thanh (nếu có uriStr) hoặc chuông thông báo mặc định hệ thống.
+     * Dùng prepareAsync() thay vì prepare() đồng bộ để KHÔNG chặn main thread —
+     * file nhạc lớn hoặc đọc từ content:// chậm có thể gây giật UI/ANR nếu dùng
+     * prepare() đồng bộ ngay trên main thread.
+     */
+    private fun playUriOrDefaultRingtone(uriStr: String?) {
         stopMp3()
-        try {
-            if (uriStr != null) {
-                mediaPlayer = MediaPlayer().apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ALARM)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build()
-                    )
-                    setDataSource(applicationContext, Uri.parse(uriStr))
-                    isLooping = false
-                    prepare()
-                    start()
-                    setOnCompletionListener { stopMp3() }
-                }
-            } else {
+        if (uriStr == null) {
+            try {
                 val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                RingtoneManager.getRingtone(applicationContext, uri).play()
+                RingtoneManager.getRingtone(applicationContext, uri)?.play()
+            } catch (e: Exception) { }
+            return
+        }
+        try {
+            mediaPlayer = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                setDataSource(applicationContext, Uri.parse(uriStr))
+                isLooping = false
+                setOnPreparedListener { mp -> mp.start() }
+                setOnCompletionListener { stopMp3() }
+                setOnErrorListener { _, _, _ ->
+                    // File lỗi/hỏng → dọn dẹp, không crash service
+                    stopMp3()
+                    true
+                }
+                prepareAsync()
             }
-        } catch (e: Exception) { }
+        } catch (e: Exception) {
+            stopMp3()
+            // Fallback về chuông thông báo mặc định nếu file người dùng chọn bị lỗi
+            try {
+                val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                RingtoneManager.getRingtone(applicationContext, uri)?.play()
+            } catch (e2: Exception) { }
+        }
     }
 
     private fun stopMp3() {

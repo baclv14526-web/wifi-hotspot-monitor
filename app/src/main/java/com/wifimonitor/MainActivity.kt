@@ -1,6 +1,7 @@
 package com.wifimonitor
 
 import android.Manifest
+import android.app.TimePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -28,6 +29,19 @@ class MainActivity : AppCompatActivity() {
     private var batteryThreshold: Int
         get() = prefs.getInt("battery_threshold", MonitorService.BATTERY_THRESHOLD)
         set(v) = prefs.edit().putInt("battery_threshold", v).apply()
+
+    // Đồng hồ báo thức
+    private var alarmHour: Int
+        get() = prefs.getInt("alarm_hour", 6)
+        set(v) = prefs.edit().putInt("alarm_hour", v).apply()
+
+    private var alarmMinute: Int
+        get() = prefs.getInt("alarm_minute", 0)
+        set(v) = prefs.edit().putInt("alarm_minute", v).apply()
+
+    private var alarmEnabled: Boolean
+        get() = prefs.getBoolean("alarm_enabled", false)
+        set(v) = prefs.edit().putBoolean("alarm_enabled", v).apply()
 
     // Cờ chặn listener của RadioGroup khi ta tự gọi check() để đồng bộ UI
     // (nếu không có cờ này, mỗi lần updateUI() chạy sẽ vô tình kích hoạt lại
@@ -58,6 +72,17 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString(MonitorService.PREF_BATTERY_MP3_URI, uri.toString()).apply()
         updateBatteryMp3UI()
         Toast.makeText(this, "Đã chọn nhạc cảnh báo pin", Toast.LENGTH_SHORT).show()
+    }
+
+    // Launcher chọn file MP3 riêng cho báo thức
+    private val alarmMp3Launcher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        prefs.edit().putString(AlarmRingService.PREF_ALARM_MP3_URI, uri.toString()).apply()
+        updateAlarmMp3UI()
+        Toast.makeText(this, "Đã chọn nhạc báo thức", Toast.LENGTH_SHORT).show()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -128,6 +153,13 @@ class MainActivity : AppCompatActivity() {
         binding.switchBatteryAlert.setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("battery_alert_enabled", checked).apply()
             updateBatteryUI()
+            if (!checked) {
+                // FIX: xóa ngay notification cảnh báo pin đang hiện (nếu có) khi
+                // người dùng tắt tính năng — trước đây notification bị bỏ sót lại
+                // vì service chỉ hủy nó khi pin sạc lại, không phải khi tắt switch.
+                val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+                nm.cancel(MonitorService.BATTERY_ALERT_ID)
+            }
         }
         binding.btnBatteryMinus.setOnClickListener {
             if (batteryThreshold > 5) {
@@ -150,6 +182,48 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().remove(MonitorService.PREF_BATTERY_MP3_URI).apply()
             updateBatteryMp3UI()
             Toast.makeText(this, "Đã xóa — dùng nhạc Hotspot hoặc chuông mặc định", Toast.LENGTH_SHORT).show()
+        }
+
+        // Đồng hồ báo thức
+        binding.switchAlarmEnabled.setOnCheckedChangeListener { _, checked ->
+            alarmEnabled = checked
+            if (checked) {
+                AlarmClockReceiver.scheduleAlarm(this, alarmHour, alarmMinute)
+                Toast.makeText(
+                    this,
+                    "Đã đặt báo thức lúc ${formatTime(alarmHour, alarmMinute)}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                AlarmClockReceiver.cancelAlarm(this)
+                Toast.makeText(this, "Đã tắt báo thức", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        binding.btnPickAlarmTime.setOnClickListener {
+            TimePickerDialog(
+                this,
+                { _, hour, minute ->
+                    alarmHour = hour
+                    alarmMinute = minute
+                    binding.tvAlarmTime.text = formatTime(hour, minute)
+                    // Nếu báo thức đang bật, đặt lại lịch ngay với giờ mới
+                    if (alarmEnabled) {
+                        AlarmClockReceiver.scheduleAlarm(this, hour, minute)
+                        Toast.makeText(this, "Đã cập nhật giờ báo thức", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                alarmHour, alarmMinute, true // true = định dạng 24 giờ
+            ).show()
+        }
+
+        binding.btnPickAlarmMp3.setOnClickListener {
+            alarmMp3Launcher.launch(arrayOf("audio/mpeg", "audio/*"))
+        }
+        binding.btnClearAlarmMp3.setOnClickListener {
+            prefs.edit().remove(AlarmRingService.PREF_ALARM_MP3_URI).apply()
+            updateAlarmMp3UI()
+            Toast.makeText(this, "Đã xóa — dùng chuông báo thức mặc định", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -178,6 +252,7 @@ class MainActivity : AppCompatActivity() {
         updateMp3UI()
         updateBatteryUI()
         updateBatteryMp3UI()
+        updateAlarmUI()
     }
 
     private fun updateModeUI() {
@@ -186,6 +261,26 @@ class MainActivity : AppCompatActivity() {
         binding.layoutScheduleInfo.visibility =
             if (useSchedule) android.view.View.VISIBLE else android.view.View.GONE
     }
+
+    private fun updateAlarmUI() {
+        binding.switchAlarmEnabled.isChecked = alarmEnabled
+        binding.tvAlarmTime.text = formatTime(alarmHour, alarmMinute)
+    }
+
+    private fun updateAlarmMp3UI() {
+        val uriStr = prefs.getString(AlarmRingService.PREF_ALARM_MP3_URI, null)
+        if (uriStr != null) {
+            val name = getFileName(Uri.parse(uriStr)) ?: "File đã chọn"
+            binding.tvAlarmMp3Name.text = "🎵 $name"
+            binding.btnClearAlarmMp3.visibility = android.view.View.VISIBLE
+        } else {
+            binding.tvAlarmMp3Name.text = "Chưa chọn — dùng chuông báo thức mặc định"
+            binding.btnClearAlarmMp3.visibility = android.view.View.GONE
+        }
+    }
+
+    private fun formatTime(hour: Int, minute: Int): String =
+        String.format("%02d:%02d", hour, minute)
 
     private fun updateMp3UI() {
         val uriStr = prefs.getString(MonitorService.PREF_MP3_URI, null)
@@ -228,8 +323,7 @@ class MainActivity : AppCompatActivity() {
         return try {
             contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                 val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                cursor.moveToFirst()
-                cursor.getString(idx)
+                if (idx < 0 || !cursor.moveToFirst()) null else cursor.getString(idx)
             }
         } catch (e: Exception) { null }
     }
@@ -260,8 +354,6 @@ class MainActivity : AppCompatActivity() {
             ScheduleReceiver.setupDailySchedule(this)
             val si = Intent(this, MonitorService::class.java).apply {
                 putExtra(MonitorService.EXTRA_TRIGGER, MonitorService.TRIGGER_SCHEDULE_MODE)
-                putExtra("battery_threshold", batteryThreshold)
-                putExtra("battery_alert_enabled", prefs.getBoolean("battery_alert_enabled", true))
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(si)
             else startService(si)
@@ -269,8 +361,6 @@ class MainActivity : AppCompatActivity() {
             ScheduleReceiver.cancelDailySchedule(this)
             val si = Intent(this, MonitorService::class.java).apply {
                 putExtra(MonitorService.EXTRA_INTERVAL, prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL))
-                putExtra("battery_threshold", batteryThreshold)
-                putExtra("battery_alert_enabled", prefs.getBoolean("battery_alert_enabled", true))
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(si)
             else startService(si)
