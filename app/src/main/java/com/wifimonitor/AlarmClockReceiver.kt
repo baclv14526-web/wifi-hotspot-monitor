@@ -6,18 +6,25 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.PowerManager
 import java.util.Calendar
 
 /**
- * Nhận broadcast đến giờ báo thức đã đặt. Khi kêu lần đầu (ringIndex = 0):
- * - Lên lịch lại cho NGÀY MAI ngay (báo thức lặp lại hàng ngày)
- * - Lên lịch thêm 2 lần kêu lại (ringIndex = 1, 2) cách nhau trong vòng 15 phút,
- *   để tổng cộng kêu tối đa 3 lần nếu người dùng không bấm "Dừng báo thức".
+ * Nhận broadcast đến giờ báo thức đã đặt.
+ * Sử dụng AlarmManager.setAlarmClock để đảm bảo đánh thức máy chính xác trong mọi chế độ tiết kiệm pin
+ * và được Android 14 đặc cách cho phép khởi động Foreground Service từ chế độ nền.
  */
 class AlarmClockReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val ringIndex = intent.getIntExtra(EXTRA_RING_INDEX, 0)
+
+        // Giữ WakeLock ngắn hạn để CPU không ngủ trước khi Service khởi chạy xong
+        try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WifiHotspotMonitor::AlarmReceiverWakeLock")
+            wl.acquire(5000L)
+        } catch (e: Exception) { }
 
         if (ringIndex == 0) {
             rescheduleTomorrow(context)
@@ -28,10 +35,15 @@ class AlarmClockReceiver : BroadcastReceiver() {
         val si = Intent(context, AlarmRingService::class.java).apply {
             putExtra(AlarmRingService.EXTRA_RING_INDEX, ringIndex)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(si)
-        } else {
-            context.startService(si)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(si)
+            } else {
+                context.startService(si)
+            }
+        } catch (e: Exception) {
+            // Fallback nếu có lỗi khởi chạy FGS
+            try { context.startService(si) } catch (e2: Exception) { }
         }
     }
 
@@ -42,7 +54,7 @@ class AlarmClockReceiver : BroadcastReceiver() {
         private const val REQ_RING_1 = 9001
         private const val REQ_RING_2 = 9002
 
-        // Tổng 3 lần kêu trong vòng 15 phút: lần 1 (0 phút), lần 2 (+5 phút), lần 3 (+10 phút)
+        // 3 lần kêu: lần 1 (0 phút), lần 2 (+5 phút), lần 3 (+10 phút)
         private const val RERING_OFFSET_1_MS = 5 * 60 * 1000L
         private const val RERING_OFFSET_2_MS = 10 * 60 * 1000L
 
@@ -56,7 +68,7 @@ class AlarmClockReceiver : BroadcastReceiver() {
 
             val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             val triggerMs = nextTriggerMs(hour, minute)
-            scheduleExact(am, triggerMs, buildPendingIntent(context, REQ_MAIN, 0))
+            scheduleExactAlarmClock(context, am, triggerMs, buildPendingIntent(context, REQ_MAIN, 0))
         }
 
         fun cancelAlarm(context: Context) {
@@ -69,7 +81,7 @@ class AlarmClockReceiver : BroadcastReceiver() {
             val stopIntent = Intent(context, AlarmRingService::class.java).apply {
                 action = AlarmRingService.ACTION_STOP
             }
-            context.startService(stopIntent)
+            try { context.startService(stopIntent) } catch (e: Exception) { }
         }
 
         fun cancelRemainingRings(context: Context) {
@@ -78,7 +90,7 @@ class AlarmClockReceiver : BroadcastReceiver() {
             am.cancel(buildPendingIntent(context, REQ_RING_2, 2))
         }
 
-        /** Gọi lại sau khi reboot máy, để khôi phục báo thức đã bật trước đó. */
+        /** Khôi phục báo thức sau khi khởi động lại máy */
         fun restoreIfEnabled(context: Context) {
             val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
             if (!prefs.getBoolean("alarm_enabled", false)) return
@@ -98,37 +110,46 @@ class AlarmClockReceiver : BroadcastReceiver() {
                 set(Calendar.MINUTE, minute)
                 set(Calendar.SECOND, 0)
                 set(Calendar.MILLISECOND, 0)
-                add(Calendar.DAY_OF_YEAR, 1) // luôn là ngày mai vì hôm nay vừa kêu
+                add(Calendar.DAY_OF_YEAR, 1) // Ngày mai
             }
-            scheduleExact(am, cal.timeInMillis, buildPendingIntent(context, REQ_MAIN, 0))
+            scheduleExactAlarmClock(context, am, cal.timeInMillis, buildPendingIntent(context, REQ_MAIN, 0))
         }
 
         private fun scheduleReRing(context: Context, ringIndex: Int, offsetMs: Long) {
             val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             val reqCode = if (ringIndex == 1) REQ_RING_1 else REQ_RING_2
             val pi = buildPendingIntent(context, reqCode, ringIndex)
-            scheduleExact(am, System.currentTimeMillis() + offsetMs, pi)
+            scheduleExactAlarmClock(context, am, System.currentTimeMillis() + offsetMs, pi)
         }
 
-        private fun scheduleExact(am: AlarmManager, triggerMs: Long, pi: PendingIntent) {
+        /**
+         * Đặt báo thức với AlarmClockInfo - cơ chế chuẩn của Android để đảm bảo
+         * chuông luôn đổ đúng giờ và miễn trừ kiểm soát nền Android 14.
+         */
+        private fun scheduleExactAlarmClock(context: Context, am: AlarmManager, triggerMs: Long, pi: PendingIntent) {
             try {
-                when {
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-                        if (am.canScheduleExactAlarms()) {
-                            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                        } else {
-                            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                        }
-                    }
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
-                        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                    }
-                    else -> {
-                        am.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                    }
+                val showIntent = Intent(context, MainActivity::class.java)
+                val showPi = PendingIntent.getActivity(
+                    context, 0, showIntent,
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerMs, showPi)
+                    am.setAlarmClock(alarmClockInfo, pi)
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                } else {
+                    am.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pi)
                 }
             } catch (e: SecurityException) {
-                try { am.set(AlarmManager.RTC_WAKEUP, triggerMs, pi) } catch (e2: Exception) { }
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                    } else {
+                        am.set(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                    }
+                } catch (e2: Exception) { }
             } catch (e: Exception) { }
         }
 

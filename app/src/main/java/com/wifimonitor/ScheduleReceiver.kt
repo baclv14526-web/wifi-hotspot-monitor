@@ -6,22 +6,32 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.PowerManager
 import java.util.Calendar
 
 class ScheduleReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WifiHotspotMonitor::ScheduleReceiverWakeLock")
+            wl.acquire(5000L)
+        } catch (e: Exception) { }
+
         // Kiểm tra ngay khi alarm kích hoạt
         val isOn = HotspotUtils.isEnabled(context)
         if (!isOn) {
-            // Đảm bảo service đang chạy để gửi alert
             val si = Intent(context, MonitorService::class.java).apply {
                 putExtra(MonitorService.EXTRA_TRIGGER, MonitorService.TRIGGER_SCHEDULE)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(si)
-            } else {
-                context.startService(si)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(si)
+                } else {
+                    context.startService(si)
+                }
+            } catch (e: Exception) {
+                try { context.startService(si) } catch (e2: Exception) { }
             }
         }
         // Lên lịch lại cho ngày mai
@@ -37,42 +47,34 @@ class ScheduleReceiver : BroadcastReceiver() {
             SCHEDULE_HOURS.forEachIndexed { index, hour ->
                 val pi = buildPendingIntent(context, index)
                 val triggerMs = nextTriggerMs(hour)
-                scheduleOne(am, triggerMs, pi)
+                scheduleOne(context, am, triggerMs, pi)
             }
         }
 
-        /**
-         * Đặt 1 alarm, có kiểm tra quyền và fallback an toàn.
-         * FIX QUAN TRỌNG: setExactAndAllowWhileIdle() có thể ném SecurityException
-         * nếu người dùng thu hồi quyền "Alarms & reminders" trong Settings (Android 12+).
-         * Nếu không bắt lỗi này, app sẽ crash ngay khi bật chế độ lịch trình.
-         */
-        private fun scheduleOne(am: AlarmManager, triggerMs: Long, pi: PendingIntent) {
+        private fun scheduleOne(context: Context, am: AlarmManager, triggerMs: Long, pi: PendingIntent) {
             try {
-                when {
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-                        // Android 12+: phải kiểm tra quyền exact alarm trước khi gọi
-                        if (am.canScheduleExactAlarms()) {
-                            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                        } else {
-                            // Không có quyền → dùng lịch không chính xác thay thế,
-                            // vẫn hoạt động, chỉ có thể trễ vài phút
-                            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                        }
-                    }
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
-                        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                    }
-                    else -> {
-                        am.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                    }
+                val showIntent = Intent(context, MainActivity::class.java)
+                val showPi = PendingIntent.getActivity(
+                    context, 0, showIntent,
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    val info = AlarmManager.AlarmClockInfo(triggerMs, showPi)
+                    am.setAlarmClock(info, pi)
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                } else {
+                    am.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pi)
                 }
             } catch (e: SecurityException) {
-                // Fallback cuối cùng nếu quyền bị thu hồi đột ngột giữa lúc chạy
-                try { am.set(AlarmManager.RTC_WAKEUP, triggerMs, pi) } catch (e2: Exception) { }
-            } catch (e: Exception) {
-                // Không để bất kỳ lỗi AlarmManager nào làm crash app
-            }
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                    } else {
+                        am.set(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                    }
+                } catch (e2: Exception) { }
+            } catch (e: Exception) { }
         }
 
         fun cancelDailySchedule(context: Context) {
@@ -102,7 +104,6 @@ class ScheduleReceiver : BroadcastReceiver() {
                 set(Calendar.MINUTE, 0)
                 set(Calendar.SECOND, 0)
                 set(Calendar.MILLISECOND, 0)
-                // Nếu giờ đã qua hôm nay → sang ngày mai
                 if (timeInMillis <= System.currentTimeMillis()) {
                     add(Calendar.DAY_OF_YEAR, 1)
                 }
