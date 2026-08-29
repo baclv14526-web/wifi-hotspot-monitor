@@ -6,34 +6,29 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.os.PowerManager
 import java.util.Calendar
 
 class ScheduleReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        try {
-            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-            val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WifiHotspotMonitor::ScheduleReceiverWakeLock")
-            wl.acquire(5000L)
-        } catch (e: Exception) { }
-
-        // Kiểm tra ngay khi alarm kích hoạt
-        val isOn = HotspotUtils.isEnabled(context)
-        if (!isOn) {
-            val si = Intent(context, MonitorService::class.java).apply {
-                putExtra(MonitorService.EXTRA_TRIGGER, MonitorService.TRIGGER_SCHEDULE)
-            }
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(si)
-                } else {
-                    context.startService(si)
-                }
-            } catch (e: Exception) {
-                try { context.startService(si) } catch (e2: Exception) { }
-            }
+        // Luôn "ping" service tại đúng mốc giờ để cập nhật trạng thái trong
+        // notification nền — trước đây chỉ start khi hotspot TẮT, khiến người
+        // dùng không có cách nào biết lịch trình có thực sự chạy hay không khi
+        // hotspot đang BẬT. Logic gửi cảnh báo (chỉ khi tắt) vẫn nằm trong
+        // MonitorService.pollHotspot(), không đổi.
+        val si = Intent(context, MonitorService::class.java).apply {
+            putExtra(MonitorService.EXTRA_TRIGGER, MonitorService.TRIGGER_SCHEDULE)
         }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(si)
+            } else {
+                context.startService(si)
+            }
+        } catch (e: Exception) {
+            // Không để lỗi start service làm crash ứng dụng
+        }
+
         // Lên lịch lại cho ngày mai
         scheduleNext(context)
     }
@@ -47,34 +42,49 @@ class ScheduleReceiver : BroadcastReceiver() {
             SCHEDULE_HOURS.forEachIndexed { index, hour ->
                 val pi = buildPendingIntent(context, index)
                 val triggerMs = nextTriggerMs(hour)
-                scheduleOne(context, am, triggerMs, pi)
+                scheduleOne(am, triggerMs, pi)
             }
         }
 
-        private fun scheduleOne(context: Context, am: AlarmManager, triggerMs: Long, pi: PendingIntent) {
+        /**
+         * Đặt 1 alarm, có kiểm tra quyền và fallback an toàn.
+         * FIX QUAN TRỌNG (crash trên Android 9/ColorOS): việc gọi trực tiếp
+         * am.canScheduleExactAlarms() (API 31+) NGAY TRONG hàm này — dù có bọc
+         * if (SDK_INT >= S) — vẫn có thể khiến ART trên một số ROM cũ (đặc biệt
+         * ColorOS) ném NoSuchMethodError/VerifyError khi class này được nạp,
+         * vì trình verify kiểm tra TOÀN BỘ method chứ không chỉ nhánh sẽ chạy.
+         * Cách fix chuẩn: tách lời gọi API mới ra 1 object riêng (Api31Compat)
+         * — object đó chỉ được nạp/verify khi thực sự bị tham chiếu tới, tức
+         * chỉ trên máy Android 12+. Trên Android 9, object này không bao giờ
+         * được chạm tới nên không gây crash.
+         */
+        private fun scheduleOne(am: AlarmManager, triggerMs: Long, pi: PendingIntent) {
             try {
-                val showIntent = Intent(context, MainActivity::class.java)
-                val showPi = PendingIntent.getActivity(
-                    context, 0, showIntent,
-                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                )
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    val info = AlarmManager.AlarmClockInfo(triggerMs, showPi)
-                    am.setAlarmClock(info, pi)
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                } else {
-                    am.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                when {
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                        if (Api31Compat.canScheduleExactAlarms(am)) {
+                            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                        } else {
+                            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                        }
+                    }
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
+                        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                    }
+                    else -> {
+                        am.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+                    }
                 }
             } catch (e: SecurityException) {
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                    } else {
-                        am.set(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-                    }
-                } catch (e2: Exception) { }
-            } catch (e: Exception) { }
+                // Fallback cuối cùng nếu quyền bị thu hồi đột ngột giữa lúc chạy
+                try { am.set(AlarmManager.RTC_WAKEUP, triggerMs, pi) } catch (e2: Exception) { }
+            } catch (e: Exception) {
+                // Không để bất kỳ lỗi AlarmManager nào làm crash app
+            } catch (e: Throwable) {
+                // Bắt cả NoSuchMethodError/VerifyError phòng trường hợp ROM đặc biệt
+                // vẫn gặp lỗi verify dù đã tách class — tuyệt đối không để crash app
+                try { am.setExact(AlarmManager.RTC_WAKEUP, triggerMs, pi) } catch (e3: Exception) { }
+            }
         }
 
         fun cancelDailySchedule(context: Context) {
@@ -104,6 +114,7 @@ class ScheduleReceiver : BroadcastReceiver() {
                 set(Calendar.MINUTE, 0)
                 set(Calendar.SECOND, 0)
                 set(Calendar.MILLISECOND, 0)
+                // Nếu giờ đã qua hôm nay → sang ngày mai
                 if (timeInMillis <= System.currentTimeMillis()) {
                     add(Calendar.DAY_OF_YEAR, 1)
                 }

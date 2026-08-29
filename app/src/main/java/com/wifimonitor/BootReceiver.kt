@@ -18,7 +18,7 @@ class BootReceiver : BroadcastReceiver() {
 
         if (!prefs.getBoolean("auto_start", true)) return
 
-        val useSchedule = prefs.getBoolean("use_schedule", false)
+        val useSchedule = prefs.getBoolean("use_schedule", true)
 
         if (useSchedule) {
             // Chế độ lịch trình: restore alarm + start service (foreground notification)

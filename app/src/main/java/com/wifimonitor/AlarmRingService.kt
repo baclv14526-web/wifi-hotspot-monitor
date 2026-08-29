@@ -15,20 +15,19 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 
 /**
- * Service phát chuông báo thức chuẩn.
- * Tự động giữ WakeLock, sử dụng MediaPlayer lặp lại âm thanh to rõ
- * và hiển thị thông báo với nút "Dừng báo thức".
+ * Service phát chuông báo thức. Mỗi lần kêu là 1 lần phát ngắn (không lặp vô hạn),
+ * kèm notification có nút "Dừng báo thức" để hủy các lần kêu lại còn sót.
+ * Tổng cộng báo thức sẽ kêu tối đa 3 lần trong vòng 15 phút (do AlarmClockReceiver
+ * lên lịch), nếu người dùng không bấm Dừng sớm hơn.
  */
 class AlarmRingService : Service() {
 
     private var mediaPlayer: MediaPlayer? = null
     private val handler = Handler(Looper.getMainLooper())
     private var autoStopRunnable: Runnable? = null
-    private var wakeLock: PowerManager.WakeLock? = null
 
     companion object {
         const val CH_ALARM = "ch_alarm_clock"
@@ -37,22 +36,12 @@ class AlarmRingService : Service() {
         const val ACTION_STOP = "com.wifimonitor.action.ALARM_STOP"
         const val PREF_ALARM_MP3_URI = "alarm_mp3_uri"
         const val TOTAL_RINGS = 3
-        private const val AUTO_STOP_MS = 45_000L // Tự dừng sau 45 giây nếu không ai tắt
+        private const val AUTO_STOP_MS = 30_000L // tự dừng an toàn nếu file nhạc quá dài
     }
 
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        try {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = pm.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                "WifiHotspotMonitor::AlarmRingWakeLock"
-            ).apply {
-                setReferenceCounted(false)
-                acquire(AUTO_STOP_MS + 5000L)
-            }
-        } catch (e: Exception) { }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -75,9 +64,6 @@ class AlarmRingService : Service() {
     override fun onDestroy() {
         autoStopRunnable?.let { handler.removeCallbacks(it) }
         releasePlayer()
-        try {
-            wakeLock?.let { if (it.isHeld) it.release() }
-        } catch (e: Exception) { }
         super.onDestroy()
     }
 
@@ -87,29 +73,25 @@ class AlarmRingService : Service() {
         val uriStr = getSharedPreferences("prefs", Context.MODE_PRIVATE)
             .getString(PREF_ALARM_MP3_URI, null)
         try {
-            val soundUri: Uri = if (!uriStr.isNullOrEmpty()) {
-                Uri.parse(uriStr)
-            } else {
-                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            }
-
-            mediaPlayer = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build()
-                )
-                setDataSource(applicationContext, soundUri)
-                isLooping = true // Lặp lại liên tục cho đến khi người dùng bấm tắt hoặc hết 45s
-                setOnPreparedListener { it.start() }
-                setOnErrorListener { _, _, _ ->
-                    stopRingingAndSelf()
-                    true
+            if (uriStr != null) {
+                mediaPlayer = MediaPlayer().apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    setDataSource(applicationContext, Uri.parse(uriStr))
+                    isLooping = false
+                    setOnPreparedListener { it.start() }
+                    setOnCompletionListener { stopRingingAndSelf() }
+                    setOnErrorListener { _, _, _ -> stopRingingAndSelf(); true }
+                    prepareAsync()
                 }
-                prepareAsync()
+            } else {
+                // Chưa chọn file riêng → dùng chuông BÁO THỨC mặc định của hệ thống
+                val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                RingtoneManager.getRingtone(applicationContext, uri)?.play()
             }
         } catch (e: Exception) {
             stopRingingAndSelf()
@@ -117,17 +99,13 @@ class AlarmRingService : Service() {
     }
 
     private fun releasePlayer() {
-        try {
-            mediaPlayer?.apply {
-                if (isPlaying) stop()
-                release()
-            }
-        } catch (e: Exception) { }
+        try { mediaPlayer?.apply { if (isPlaying) stop(); release() } } catch (e: Exception) { }
         mediaPlayer = null
     }
 
     private fun stopRingingAndSelf() {
         releasePlayer()
+        // Hủy các lần kêu lại còn lại (nếu người dùng bấm Dừng giữa chừng)
         AlarmClockReceiver.cancelRemainingRings(applicationContext)
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.cancel(NOTIF_ID)
@@ -153,18 +131,17 @@ class AlarmRingService : Service() {
         )
 
         return NotificationCompat.Builder(this, CH_ALARM)
-            .setContentTitle("⏰ BÁO THỨC! (lần ${ringIndex + 1}/$TOTAL_RINGS)")
-            .setContentText("Nhấn \"Dừng báo thức\" để tắt chuông.")
+            .setContentTitle("⏰ Báo thức! (lần ${ringIndex + 1}/$TOTAL_RINGS)")
+            .setContentText("Nhấn \"Dừng báo thức\" để tắt.")
             .setSmallIcon(R.drawable.ic_wifi_notify)
             .setContentIntent(openAppPi)
-            .setFullScreenIntent(openAppPi, true)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dừng báo thức", stopPi)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setAutoCancel(false)
-            .setVibrate(longArrayOf(0, 800, 400, 800))
+            .setVibrate(longArrayOf(0, 500, 250, 500))
             .build()
     }
 
@@ -175,7 +152,7 @@ class AlarmRingService : Service() {
                 NotificationChannel(CH_ALARM, "Đồng hồ báo thức", NotificationManager.IMPORTANCE_HIGH)
                     .apply {
                         enableVibration(true)
-                        vibrationPattern = longArrayOf(0, 800, 400, 800)
+                        vibrationPattern = longArrayOf(0, 500, 250, 500)
                         lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                     }
             )

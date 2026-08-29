@@ -8,11 +8,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Cần cho AlarmManager.setExactAndAllowWhileIdle trên Android 12+.
+         Từ Android 12+, người dùng có thể thu hồi quyền này trong Settings —
+         ScheduleReceiver đã xử lý fallback an toàn nếu bị thu hồi. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.VIBRATE" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- ACTION_BATTERY_CHANGED không cần permission, tự động được cấp -->
+    <!-- Cần cho AlarmRingService phát chuông báo thức (foregroundServiceType=mediaPlayback) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <application
