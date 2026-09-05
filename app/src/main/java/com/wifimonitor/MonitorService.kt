@@ -29,6 +29,9 @@ class MonitorService : Service() {
     private var alertCount = 0
     private var mediaPlayer: MediaPlayer? = null
     private var batteryAlertSent = false
+    private var batteryRingCount = 0          // đếm số lần đã kêu (0→3)
+    private var batteryRing2Runnable: Runnable? = null
+    private var batteryRing3Runnable: Runnable? = null
     private var batteryReceiver: BroadcastReceiver? = null
 
     companion object {
@@ -50,6 +53,10 @@ class MonitorService : Service() {
         const val PREF_MP3_URI = "mp3_uri"
         const val PREF_BATTERY_MP3_URI = "battery_mp3_uri"
         const val BATTERY_THRESHOLD = 20
+
+        // Cảnh báo pin: kêu tối đa 3 lần, mỗi lần cách nhau 4.5 phút (tổng 9 phút)
+        const val BATTERY_MAX_RINGS = 3
+        const val BATTERY_RING_INTERVAL_MS = 4 * 60 * 1000L + 30 * 1000L  // 4 phút 30 giây
     }
 
     override fun onCreate() {
@@ -178,11 +185,14 @@ class MonitorService : Service() {
 
                 if (percent <= threshold && !isCharging && alertEnabled) {
                     if (!batteryAlertSent) {
+                        // Pin vừa xuống dưới ngưỡng → bắt đầu chu kỳ 3 lần kêu
                         batteryAlertSent = true
-                        sendBatteryAlert(percent)
-                        playBatteryMp3()
+                        batteryRingCount = 0
+                        startBatteryRingCycle(percent)
                     }
                 } else if (percent > threshold || isCharging) {
+                    // Pin đã sạc lên / đang sạc → reset hoàn toàn để báo lại lần sau
+                    cancelBatteryRingCycle()
                     batteryAlertSent = false
                     val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                     nm.cancel(BATTERY_ALERT_ID)
@@ -205,8 +215,55 @@ class MonitorService : Service() {
     }
 
     private fun unregisterBatteryReceiver() {
+        cancelBatteryRingCycle()
         try { batteryReceiver?.let { unregisterReceiver(it) } } catch (e: Exception) { }
         batteryReceiver = null
+    }
+
+    /**
+     * Bắt đầu chu kỳ kêu chuông cảnh báo pin:
+     * - Lần 1: ngay lập tức
+     * - Lần 2: sau 4 phút 30 giây
+     * - Lần 3: sau 9 phút (4.5 + 4.5)
+     * - Sau lần 3: xóa notification, không kêu nữa cho đến khi pin sạc lên rồi xuống lại
+     */
+    private fun startBatteryRingCycle(percent: Int) {
+        // Lần 1 — ngay lập tức
+        doOneBatteryRing(percent, ringIndex = 1)
+
+        // Lần 2 — sau 4.5 phút
+        batteryRing2Runnable = Runnable {
+            if (batteryAlertSent) doOneBatteryRing(percent, ringIndex = 2)
+        }
+        // Lần 3 — sau 9 phút, rồi tắt hẳn notification
+        batteryRing3Runnable = Runnable {
+            if (batteryAlertSent) {
+                doOneBatteryRing(percent, ringIndex = 3)
+                // Sau lần 3: đợi nhạc phát xong rồi xóa notification (5 giây)
+                handler.postDelayed({
+                    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    nm.cancel(BATTERY_ALERT_ID)
+                }, 5000L)
+            }
+        }
+
+        handler.postDelayed(batteryRing2Runnable!!, BATTERY_RING_INTERVAL_MS)
+        handler.postDelayed(batteryRing3Runnable!!, BATTERY_RING_INTERVAL_MS * 2)
+    }
+
+    private fun doOneBatteryRing(percent: Int, ringIndex: Int) {
+        batteryRingCount = ringIndex
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        sendBatteryAlert(percent, ringIndex)
+        playBatteryMp3()
+    }
+
+    private fun cancelBatteryRingCycle() {
+        batteryRing2Runnable?.let { handler.removeCallbacks(it) }
+        batteryRing3Runnable?.let { handler.removeCallbacks(it) }
+        batteryRing2Runnable = null
+        batteryRing3Runnable = null
+        batteryRingCount = 0
     }
 
     // ── MP3 Player ───────────────────────────────────────────────────
@@ -339,7 +396,7 @@ class MonitorService : Service() {
         )
     }
 
-    private fun sendBatteryAlert(percent: Int) {
+    private fun sendBatteryAlert(percent: Int, ringIndex: Int = 1) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val pi = PendingIntent.getActivity(
             this, 20,
@@ -350,14 +407,25 @@ class MonitorService : Service() {
         val hasMp3 = prefs2.getString(PREF_BATTERY_MP3_URI, null) != null
             || prefs2.getString(PREF_MP3_URI, null) != null
 
+        val isFinal = ringIndex >= BATTERY_MAX_RINGS
+        val title = if (isFinal)
+            "🔋 Pin sắp hết $percent% — Đã ngừng nhắc ($ringIndex/$BATTERY_MAX_RINGS)"
+        else
+            "🔋 Pin sắp hết — còn $percent%! ($ringIndex/$BATTERY_MAX_RINGS)"
+        val body = if (isFinal)
+            "Đã cảnh báo $BATTERY_MAX_RINGS lần. Hãy cắm sạc ngay! Thông báo sẽ tự xóa."
+        else
+            "Pin điện thoại còn $percent%.\nHãy cắm sạc để tránh gián đoạn Hotspot WiFi."
+
         nm.notify(BATTERY_ALERT_ID, NotificationCompat.Builder(this, CH_BATTERY)
-            .setContentTitle("🔋 Pin sắp hết — còn $percent%")
+            .setContentTitle(title)
             .setContentText(if (hasMp3) "🎵 Đang phát nhạc cảnh báo..." else "Hãy cắm sạc ngay!")
             .setStyle(NotificationCompat.BigTextStyle()
-                .bigText("Pin điện thoại còn $percent%.\nHãy cắm sạc để tránh gián đoạn Hotspot WiFi."))
+                .bigText(body)
+                .setSummaryText("Lần cảnh báo thứ $ringIndex / $BATTERY_MAX_RINGS"))
             .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentIntent(pi)
-            .setAutoCancel(true)
+            .setAutoCancel(false)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
