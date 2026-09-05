@@ -270,7 +270,10 @@ class MainActivity : AppCompatActivity() {
     private fun updateAlarmMp3UI() {
         val uriStr = prefs.getString(AlarmRingService.PREF_ALARM_MP3_URI, null)
         if (uriStr != null) {
-            val name = getFileName(Uri.parse(uriStr)) ?: "File đã chọn"
+            // Thử lấy tên file đẹp, nếu thất bại dùng tên từ URI path (không xóa URI khỏi prefs)
+            val name = getFileName(Uri.parse(uriStr))
+                ?: Uri.parse(uriStr).lastPathSegment?.substringAfterLast('/')
+                ?: "File đã chọn"
             binding.tvAlarmMp3Name.text = "🎵 $name"
             binding.btnClearAlarmMp3.visibility = android.view.View.VISIBLE
         } else {
@@ -285,7 +288,9 @@ class MainActivity : AppCompatActivity() {
     private fun updateMp3UI() {
         val uriStr = prefs.getString(MonitorService.PREF_MP3_URI, null)
         if (uriStr != null) {
-            val name = getFileName(Uri.parse(uriStr)) ?: "File đã chọn"
+            val name = getFileName(Uri.parse(uriStr))
+                ?: Uri.parse(uriStr).lastPathSegment?.substringAfterLast('/')
+                ?: "File đã chọn"
             binding.tvMp3Name.text = "🎵 $name"
             binding.btnClearMp3.visibility = android.view.View.VISIBLE
         } else {
@@ -310,7 +315,9 @@ class MainActivity : AppCompatActivity() {
     private fun updateBatteryMp3UI() {
         val uriStr = prefs.getString(MonitorService.PREF_BATTERY_MP3_URI, null)
         if (uriStr != null) {
-            val name = getFileName(Uri.parse(uriStr)) ?: "File đã chọn"
+            val name = getFileName(Uri.parse(uriStr))
+                ?: Uri.parse(uriStr).lastPathSegment?.substringAfterLast('/')
+                ?: "File đã chọn"
             binding.tvBatteryMp3Name.text = "🎵 $name"
             binding.btnClearBatteryMp3.visibility = android.view.View.VISIBLE
         } else {
