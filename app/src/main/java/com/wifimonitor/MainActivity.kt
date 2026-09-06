@@ -232,8 +232,16 @@ class MainActivity : AppCompatActivity() {
         binding.btnToggle.text = if (running) "Dừng giám sát" else "Bắt đầu giám sát"
         binding.tvStatus.text = if (running) "🟢 Đang chạy nền" else "🔴 Đã dừng"
 
-        val hotspot = HotspotUtils.isEnabled(this)
-        binding.tvHotspot.text = if (hotspot) "📶 Hotspot: BẬT" else "📵 Hotspot: TẮT"
+        // FIX: HotspotUtils.isEnabled() dùng Java Reflection, trên ColorOS có thể
+        // tốn 100-300ms → chạy trên background thread, update UI khi có kết quả
+        Thread {
+            val hotspot = HotspotUtils.isEnabled(this)
+            runOnUiThread {
+                if (!isFinishing) {
+                    binding.tvHotspot.text = if (hotspot) "📶 Hotspot: BẬT" else "📵 Hotspot: TẮT"
+                }
+            }
+        }.start()
 
         binding.switchAutoStart.isChecked = prefs.getBoolean("auto_start", true)
 
@@ -358,6 +366,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun startMonitor() {
         try {
+            prefs.edit().putBoolean("has_ever_started", true).apply()
             if (useSchedule) {
                 ScheduleReceiver.setupDailySchedule(this)
                 val si = Intent(this, MonitorService::class.java).apply {
@@ -373,19 +382,34 @@ class MainActivity : AppCompatActivity() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(si)
                 else startService(si)
             }
+            // FIX: cập nhật UI NGAY THEO Ý ĐỊNH (optimistic update) thay vì chờ
+            // service thực sự start xong mới đọc MonitorService.running.
+            // startForegroundService() là lệnh bất đồng bộ — nếu gọi updateUI() ngay
+            // sau, running vẫn còn false → button không đổi → người dùng bấm lại.
+            setToggleUI(running = true)
             Toast.makeText(this, "Đã bắt đầu giám sát", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            // Không để bất kỳ lỗi nào ở đây làm crash cả app — báo lỗi thân thiện thay vào đó
+            setToggleUI(running = false)
             Toast.makeText(this, "Không thể bắt đầu giám sát: ${e.message}", Toast.LENGTH_LONG).show()
         }
-        updateUI()
     }
 
     private fun stopMonitor() {
         stopService(Intent(this, MonitorService::class.java))
         ScheduleReceiver.cancelDailySchedule(this)
+        // FIX: tương tự — stopService() bất đồng bộ, cập nhật UI ngay
+        setToggleUI(running = false)
         Toast.makeText(this, "Đã dừng giám sát", Toast.LENGTH_SHORT).show()
-        updateUI()
+    }
+
+    /**
+     * Cập nhật nhanh trạng thái nút Toggle + status text mà không cần gọi
+     * toàn bộ updateUI() (vốn có HotspotUtils.isEnabled() chạy Reflection
+     * trên main thread, có thể tốn 100-300ms trên ColorOS, gây giật UI).
+     */
+    private fun setToggleUI(running: Boolean) {
+        binding.btnToggle.text = if (running) "Dừng giám sát" else "Bắt đầu giám sát"
+        binding.tvStatus.text = if (running) "🟢 Đang chạy nền" else "🔴 Đã dừng"
     }
 
     private fun openHotspotSettings() {

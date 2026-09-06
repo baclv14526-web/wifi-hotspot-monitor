@@ -16,6 +16,11 @@ class BootReceiver : BroadcastReceiver() {
         // Khôi phục báo thức nếu đã bật — độc lập với cài đặt auto_start của Hotspot monitor
         AlarmClockReceiver.restoreIfEnabled(context)
 
+        // FIX QUAN TRỌNG: chỉ auto-start khi người dùng ĐÃ TỪNG bấm "Bắt đầu giám sát"
+        // ít nhất 1 lần. Nếu chưa từng bấm (mới cài xong), không tự chạy nền —
+        // tránh làm người dùng bất ngờ khi app chạy ngầm mà họ chưa biết.
+        if (!prefs.getBoolean("has_ever_started", false)) return
+
         if (!prefs.getBoolean("auto_start", true)) return
 
         val useSchedule = prefs.getBoolean("use_schedule", true)
