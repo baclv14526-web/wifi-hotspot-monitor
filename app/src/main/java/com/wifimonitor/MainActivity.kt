@@ -424,13 +424,121 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openBatterySettings() {
+        if (isOppoOrRealme()) {
+            showOppoSetupGuide()
+        } else {
+            // Thiết bị khác: chỉ cần tắt Doze optimization là đủ
+            requestIgnoreBatteryOptimization()
+        }
+    }
+
+    /**
+     * Kiểm tra thiết bị có phải Oppo/Realme (ColorOS) không
+     * dựa trên manufacturer và brand trong Build info.
+     */
+    private fun isOppoOrRealme(): Boolean {
+        val manufacturer = android.os.Build.MANUFACTURER.lowercase()
+        val brand = android.os.Build.BRAND.lowercase()
+        return manufacturer.contains("oppo") || brand.contains("oppo") ||
+               manufacturer.contains("realme") || brand.contains("realme") ||
+               brand.contains("oneplus")
+    }
+
+    /**
+     * Trên Oppo/Realme ColorOS, cần bật 3 cài đặt riêng biệt để app
+     * chạy nền ổn định. Hướng dẫn từng bước bằng dialog.
+     */
+    private fun showOppoSetupGuide() {
+        AlertDialog.Builder(this)
+            .setTitle("⚡ Tối ưu cho Oppo/Realme")
+            .setMessage(
+                "Để app chạy nền ổn định trên ColorOS, bạn cần bật 3 cài đặt:\n\n" +
+                "1️⃣ Tắt tối ưu pin (Doze)\n" +
+                "2️⃣ Bật Auto Launch\n" +
+                "3️⃣ Bật Run in Background\n\n" +
+                "Nhấn \"Bước 1\" để bắt đầu."
+            )
+            .setPositiveButton("Bước 1: Tắt tối ưu pin") { _, _ ->
+                requestIgnoreBatteryOptimization()
+                // Sau khi người dùng quay lại, hỏi tiếp bước 2
+                showStep2Guide()
+            }
+            .setNegativeButton("Để sau") { d, _ -> d.dismiss() }
+            .show()
+    }
+
+    private fun showStep2Guide() {
+        // Dùng postDelayed để dialog xuất hiện sau khi Activity resume
+        binding.root.postDelayed({
+            if (!isFinishing) {
+                AlertDialog.Builder(this)
+                    .setTitle("2️⃣ Bật Auto Launch")
+                    .setMessage(
+                        "Tiếp theo, bật \"Auto Launch\" để app tự khởi động sau reboot:\n\n" +
+                        "Settings → App Management → WiFi Hotspot Monitor → Auto Launch → BẬT ON\n\n" +
+                        "Nhấn \"Mở Settings\" để vào đúng màn hình."
+                    )
+                    .setPositiveButton("Mở App Settings") { _, _ ->
+                        openAppDetailSettings()
+                        showStep3Guide()
+                    }
+                    .setNegativeButton("Bỏ qua") { _, _ -> showStep3Guide() }
+                    .show()
+            }
+        }, 500L)
+    }
+
+    private fun showStep3Guide() {
+        binding.root.postDelayed({
+            if (!isFinishing) {
+                AlertDialog.Builder(this)
+                    .setTitle("3️⃣ Bật Run in Background")
+                    .setMessage(
+                        "Cuối cùng, bật \"Run in Background\" để app không bị kill khi màn hình tắt:\n\n" +
+                        "Settings → App Management → WiFi Hotspot Monitor → Data Usage → " +
+                        "Allow Background Data Usage → BẬT ON\n\n" +
+                        "(Hoặc tìm \"Background App Refresh\" tùy version ColorOS)"
+                    )
+                    .setPositiveButton("Mở App Settings") { _, _ ->
+                        openAppDetailSettings()
+                    }
+                    .setNegativeButton("Hoàn tất") { d, _ ->
+                        d.dismiss()
+                        android.widget.Toast.makeText(
+                            this,
+                            "✅ Đã hoàn tất! App sẽ chạy nền ổn định hơn.",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    .show()
+            }
+        }, 500L)
+    }
+
+    private fun requestIgnoreBatteryOptimization() {
         try {
-            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
-            })
+            startActivity(
+                Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+            )
         } catch (e: Exception) {
-            try { startActivity(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)) }
-            catch (e2: Exception) { }
+            // Fallback: mở thẳng trang chi tiết app
+            openAppDetailSettings()
+        }
+    }
+
+    private fun openAppDetailSettings() {
+        try {
+            startActivity(
+                Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+            )
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS))
+            } catch (e2: Exception) { }
         }
     }
 
