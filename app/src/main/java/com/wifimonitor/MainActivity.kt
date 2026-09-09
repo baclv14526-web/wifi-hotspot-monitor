@@ -382,22 +382,23 @@ class MainActivity : AppCompatActivity() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(si)
                 else startService(si)
             }
-            // FIX: cập nhật UI NGAY THEO Ý ĐỊNH (optimistic update) thay vì chờ
-            // service thực sự start xong mới đọc MonitorService.running.
-            // startForegroundService() là lệnh bất đồng bộ — nếu gọi updateUI() ngay
-            // sau, running vẫn còn false → button không đổi → người dùng bấm lại.
+            // Khởi động watchdog ngay khi bấm Bắt đầu —
+            // MonitorService cũng gọi WatchdogReceiver.start() trong onStartCommand
+            // nhưng gọi sớm ở đây để phòng trường hợp service chưa start kịp
+            WatchdogReceiver.start(this)
             setToggleUI(running = true)
             Toast.makeText(this, "Đã bắt đầu giám sát", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             setToggleUI(running = false)
-            Toast.makeText(this, "Không thể bắt đầu giám sát: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Không thể bắt đầu: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
     private fun stopMonitor() {
+        // Dừng watchdog TRƯỚC khi stop service để tránh watchdog restart service lại
+        WatchdogReceiver.stop(this)
         stopService(Intent(this, MonitorService::class.java))
         ScheduleReceiver.cancelDailySchedule(this)
-        // FIX: tương tự — stopService() bất đồng bộ, cập nhật UI ngay
         setToggleUI(running = false)
         Toast.makeText(this, "Đã dừng giám sát", Toast.LENGTH_SHORT).show()
     }

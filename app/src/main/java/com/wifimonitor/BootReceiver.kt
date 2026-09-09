@@ -26,7 +26,6 @@ class BootReceiver : BroadcastReceiver() {
         val useSchedule = prefs.getBoolean("use_schedule", true)
 
         if (useSchedule) {
-            // Chế độ lịch trình: restore alarm + start service (foreground notification)
             ScheduleReceiver.setupDailySchedule(context)
             val si = Intent(context, MonitorService::class.java).apply {
                 putExtra(MonitorService.EXTRA_TRIGGER, MonitorService.TRIGGER_SCHEDULE_MODE)
@@ -37,7 +36,6 @@ class BootReceiver : BroadcastReceiver() {
                 context.startService(si)
             }
         } else {
-            // Chế độ polling theo phút
             val si = Intent(context, MonitorService::class.java).apply {
                 putExtra(MonitorService.EXTRA_INTERVAL,
                     prefs.getInt("interval", MonitorService.DEFAULT_INTERVAL))
@@ -48,5 +46,9 @@ class BootReceiver : BroadcastReceiver() {
                 context.startService(si)
             }
         }
+
+        // Khởi động lại watchdog sau reboot — AlarmManager bị xóa khi tắt máy
+        // nên phải đặt lại. Watchdog sẽ tiếp tục ping MonitorService mỗi 15 phút.
+        WatchdogReceiver.start(context)
     }
 }

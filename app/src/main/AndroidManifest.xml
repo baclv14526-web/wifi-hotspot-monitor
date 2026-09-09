@@ -52,6 +52,12 @@
             </intent-filter>
         </receiver>
 
+        <!-- Watchdog: ping MonitorService mỗi 15 phút, tự restart nếu bị kill -->
+        <receiver
+            android:name=".WatchdogReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
         <!-- Receiver cho lịch trình kiểm tra theo giờ -->
         <receiver
             android:name=".ScheduleReceiver"

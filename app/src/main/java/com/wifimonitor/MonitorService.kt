@@ -72,30 +72,22 @@ class MonitorService : Service() {
         startForeground(FG_ID, buildFgNotification(null))
 
         // Luôn dừng polling cũ TRƯỚC khi quyết định chế độ mới.
-        // Đây là điểm mấu chốt: đảm bảo không có runnable "theo phút" nào
-        // còn sót lại khi service chuyển sang chế độ "lịch trình" (hoặc ngược lại).
         stopPolling()
 
-        // Đọc chế độ từ prefs (bền vững qua START_STICKY restart)
-        // intent có thể null khi Android restart service sau khi bị kill
+        // Khởi động / gia hạn watchdog mỗi khi service được start hoặc restart.
+        // Watchdog ping mỗi 15 phút để kiểm tra service còn sống không.
+        WatchdogReceiver.start(this)
+
         val trigger = intent?.getStringExtra(EXTRA_TRIGGER)
         val useSchedule = prefs.getBoolean("use_schedule", true)
 
         when {
-            // ScheduleReceiver kích hoạt → kiểm tra 1 lần ngay lập tức
             trigger == TRIGGER_SCHEDULE -> {
                 pollHotspot()
-                // Không startPolling — lịch trình do AlarmManager quản lý
             }
-
-            // Chế độ lịch trình (start từ MainActivity hoặc restart sau kill)
             useSchedule || trigger == TRIGGER_SCHEDULE_MODE -> {
-                // Chỉ giữ foreground notification, KHÔNG polling.
-                // stopPolling() đã được gọi ở trên rồi, không cần gọi lại.
-                // AlarmManager sẽ kích hoạt ScheduleReceiver đúng giờ.
+                // Chỉ giữ foreground notification, AlarmManager lo phần lịch trình
             }
-
-            // Chế độ theo phút (start từ MainActivity hoặc restart sau kill)
             else -> {
                 val intervalMin = intent?.getIntExtra(EXTRA_INTERVAL, DEFAULT_INTERVAL)
                     ?: prefs.getInt("interval", DEFAULT_INTERVAL)
@@ -108,6 +100,14 @@ class MonitorService : Service() {
 
     override fun onDestroy() {
         running = false
+        // Dừng watchdog khi service bị dừng CHỦ ĐỘNG (người dùng bấm Dừng).
+        // Nếu bị kill bởi OS (không qua onDestroy), watchdog vẫn chạy và sẽ
+        // restart service sau tối đa 15 phút — đây chính là mục đích của watchdog.
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("auto_start", true)) {
+            // Người dùng đã tắt auto_start → dừng luôn watchdog
+            WatchdogReceiver.stop(this)
+        }
         stopPolling()
         stopMp3()
         unregisterBatteryReceiver()
