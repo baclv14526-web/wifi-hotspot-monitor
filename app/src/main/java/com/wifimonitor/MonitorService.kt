@@ -26,10 +26,16 @@ class MonitorService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var pollRunnable: Runnable? = null
     private var lastHotspotOn: Boolean? = null
-    private var alertCount = 0
     private var mediaPlayer: MediaPlayer? = null
+
+    // Hotspot alert ring cycle (3 lần / 15 phút)
+    private var hotspotRingStarted = false       // đã bắt đầu chu kỳ kêu chưa
+    private var hotspotRing2Runnable: Runnable? = null
+    private var hotspotRing3Runnable: Runnable? = null
+
+    // Battery alert ring cycle (3 lần / 9 phút)
     private var batteryAlertSent = false
-    private var batteryRingCount = 0          // đếm số lần đã kêu (0→3)
+    private var batteryRingCount = 0
     private var batteryRing2Runnable: Runnable? = null
     private var batteryRing3Runnable: Runnable? = null
     private var batteryReceiver: BroadcastReceiver? = null
@@ -49,7 +55,10 @@ class MonitorService : Service() {
         const val TRIGGER_SCHEDULE = "schedule"      // ScheduleReceiver kích hoạt kiểm tra 1 lần
         const val TRIGGER_SCHEDULE_MODE = "schedule_mode" // Chế độ lịch trình (chỉ giữ FG notification)
         const val DEFAULT_INTERVAL = 5
-        const val MAX_ALERT_COUNT = 10
+        // Hotspot alert: tối đa 3 lần trong 15 phút (giống cảnh báo pin),
+        // mỗi lần cách nhau 4.5 phút, sau đó dừng hẳn đến khi hotspot bật lại
+        const val HOTSPOT_MAX_RINGS  = 3
+        const val HOTSPOT_RING_INTERVAL_MS = 4 * 60 * 1000L + 30 * 1000L  // 4 phút 30 giây
         const val PREF_MP3_URI = "mp3_uri"
         const val PREF_BATTERY_MP3_URI = "battery_mp3_uri"
         const val BATTERY_THRESHOLD = 20
@@ -109,6 +118,7 @@ class MonitorService : Service() {
             WatchdogReceiver.stop(this)
         }
         stopPolling()
+        cancelHotspotRingCycle()
         stopMp3()
         unregisterBatteryReceiver()
         super.onDestroy()
@@ -142,27 +152,65 @@ class MonitorService : Service() {
 
         when {
             !isOn -> {
-                alertCount++
-                when {
-                    alertCount < MAX_ALERT_COUNT -> {
-                        sendHotspotAlert(nm, alertCount, isFinal = false)
-                        playMp3()
-                    }
-                    alertCount == MAX_ALERT_COUNT -> {
-                        sendHotspotAlert(nm, alertCount, isFinal = true)
-                        playMp3()
-                        handler.postDelayed({ nm.cancel(ALERT_ID) }, 5000L)
-                    }
-                    else -> { }
+                // Hotspot đang TẮT: chỉ bắt đầu chu kỳ kêu khi chưa bắt đầu lần này
+                // (các lần poll tiếp theo trong khi hotspot vẫn tắt sẽ bị bỏ qua —
+                // ring cycle tự lên lịch bằng Handler, không phụ thuộc polling interval)
+                if (!hotspotRingStarted) {
+                    hotspotRingStarted = true
+                    startHotspotRingCycle()
                 }
             }
             isOn -> {
+                // Hotspot BẬT lại → dừng mọi chuông còn lại, reset để chu kỳ mới
+                cancelHotspotRingCycle()
                 nm.cancel(ALERT_ID)
                 stopMp3()
-                alertCount = 0
             }
         }
         lastHotspotOn = isOn
+    }
+
+    /**
+     * Bắt đầu chu kỳ cảnh báo Hotspot 3 lần trong 15 phút:
+     * - Lần 1 (ngay lập tức): gửi alert + phát nhạc
+     * - Lần 2 (+4.5 phút):    gửi alert + phát nhạc
+     * - Lần 3 (+9 phút):      gửi alert cuối + phát nhạc + xóa notification sau 5 giây
+     * Sau đó im lặng hoàn toàn cho đến khi hotspot bật lại.
+     */
+    private fun startHotspotRingCycle() {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        // Lần 1 — ngay lập tức
+        sendHotspotAlert(nm, ringIndex = 1, isFinal = false)
+        playMp3()
+
+        // Lần 2 — sau 4.5 phút
+        hotspotRing2Runnable = Runnable {
+            if (hotspotRingStarted) {
+                sendHotspotAlert(nm, ringIndex = 2, isFinal = false)
+                playMp3()
+            }
+        }
+
+        // Lần 3 — sau 9 phút, rồi tắt hẳn
+        hotspotRing3Runnable = Runnable {
+            if (hotspotRingStarted) {
+                sendHotspotAlert(nm, ringIndex = 3, isFinal = true)
+                playMp3()
+                handler.postDelayed({ nm.cancel(ALERT_ID) }, 5000L)
+            }
+        }
+
+        handler.postDelayed(hotspotRing2Runnable!!, HOTSPOT_RING_INTERVAL_MS)
+        handler.postDelayed(hotspotRing3Runnable!!, HOTSPOT_RING_INTERVAL_MS * 2)
+    }
+
+    private fun cancelHotspotRingCycle() {
+        hotspotRingStarted = false
+        hotspotRing2Runnable?.let { handler.removeCallbacks(it) }
+        hotspotRing3Runnable?.let { handler.removeCallbacks(it) }
+        hotspotRing2Runnable = null
+        hotspotRing3Runnable = null
     }
 
     // ── Battery Receiver ─────────────────────────────────────────────
@@ -368,7 +416,7 @@ class MonitorService : Service() {
         val mode = if (prefs.getBoolean("use_schedule", true)) "Lịch trình" else "Theo phút"
         val hotspotText = when (isOn) {
             true  -> "Hotspot BẬT"
-            false -> "Hotspot TẮT [$alertCount lần]"
+            false -> if (hotspotRingStarted) "Hotspot TẮT — đang cảnh báo" else "Hotspot TẮT"
             null  -> "Chờ kiểm tra..."
         }
         val batteryText = if (battery != null) " • 🔋$battery%" else ""
@@ -388,7 +436,7 @@ class MonitorService : Service() {
             .build()
     }
 
-    private fun sendHotspotAlert(nm: NotificationManager, count: Int, isFinal: Boolean) {
+    private fun sendHotspotAlert(nm: NotificationManager, ringIndex: Int, isFinal: Boolean) {
         val pi = PendingIntent.getActivity(
             this, 10,
             Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS).apply {
@@ -397,21 +445,28 @@ class MonitorService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val title = if (isFinal)
-            "⚠️ Hotspot TẮT — Đã ngừng nhắc ($count/$MAX_ALERT_COUNT)"
+            "⚠️ Hotspot TẮT — Đã ngừng nhắc ($ringIndex/$HOTSPOT_MAX_RINGS)"
         else
-            "⚠️ Hotspot WiFi đã bị tắt! ($count/$MAX_ALERT_COUNT)"
+            "⚠️ Hotspot WiFi đã bị tắt! ($ringIndex/$HOTSPOT_MAX_RINGS)"
         val body = if (isFinal)
-            "Đã cảnh báo $MAX_ALERT_COUNT lần. Thông báo tự xóa sau 5 giây."
+            "Đã cảnh báo $HOTSPOT_MAX_RINGS lần trong 15 phút. Thông báo tự xóa sau 5 giây."
         else
             "Hotspot WiFi đang TẮT.\nNhấn \"Bật Hotspot\" để vào cài đặt và bật lại ngay."
         val hasMp3 = getSharedPreferences("prefs", Context.MODE_PRIVATE)
             .getString(PREF_MP3_URI, null) != null
+        val quietNow = isQuietHours()
 
         nm.notify(ALERT_ID, NotificationCompat.Builder(this, CH_ALERT)
             .setContentTitle(title)
-            .setContentText(if (hasMp3) "🎵 Đang phát nhạc cảnh báo..." else "Nhấn để vào cài đặt.")
+            .setContentText(
+                when {
+                    quietNow  -> "🌙 Im lặng ban đêm — không kêu chuông"
+                    hasMp3    -> "🎵 Đang phát nhạc cảnh báo..."
+                    else      -> "Nhấn để vào cài đặt bật lại Hotspot."
+                }
+            )
             .setStyle(NotificationCompat.BigTextStyle().bigText(body)
-                .setSummaryText("Lần cảnh báo thứ $count / $MAX_ALERT_COUNT"))
+                .setSummaryText("Lần cảnh báo thứ $ringIndex / $HOTSPOT_MAX_RINGS"))
             .setSmallIcon(R.drawable.ic_wifi_notify)
             .setContentIntent(pi)
             .addAction(android.R.drawable.ic_menu_preferences, "Bật Hotspot", pi)
