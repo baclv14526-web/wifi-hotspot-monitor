@@ -513,6 +513,102 @@
 
         </LinearLayout>
 
+        <!-- Chế độ im lặng ban đêm -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#FFFFFF"
+            android:padding="16dp"
+            android:layout_marginBottom="12dp"
+            android:elevation="2dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="4dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="🌙 Im lặng ban đêm"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="#1A237E" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/switchQuietHours"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Vẫn hiện thông báo nhưng không kêu chuông trong khung giờ này"
+                android:textSize="12sp"
+                android:textColor="#757575"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Giờ bắt đầu -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Bắt đầu từ"
+                    android:textSize="14sp"
+                    android:textColor="#212121" />
+
+                <Button
+                    android:id="@+id/btnQuietStart"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:text="22:00"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:minWidth="80dp" />
+
+            </LinearLayout>
+
+            <!-- Giờ kết thúc -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Đến"
+                    android:textSize="14sp"
+                    android:textColor="#212121" />
+
+                <Button
+                    android:id="@+id/btnQuietEnd"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:text="06:00"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:minWidth="80dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

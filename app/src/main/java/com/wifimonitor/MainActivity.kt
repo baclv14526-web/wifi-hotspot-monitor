@@ -225,6 +225,40 @@ class MainActivity : AppCompatActivity() {
             updateAlarmMp3UI()
             Toast.makeText(this, "Đã xóa — dùng chuông báo thức mặc định", Toast.LENGTH_SHORT).show()
         }
+
+        // Chế độ im lặng ban đêm
+        binding.switchQuietHours.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean("quiet_hours_enabled", checked).apply()
+            updateQuietHoursUI()
+            val msg = if (checked)
+                "🌙 Đã bật im lặng ${formatTime(prefs.getInt("quiet_start_hour",22), prefs.getInt("quiet_start_minute",0))} – ${formatTime(prefs.getInt("quiet_end_hour",6), prefs.getInt("quiet_end_minute",0))}"
+            else "Đã tắt chế độ im lặng ban đêm"
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        }
+
+        binding.btnQuietStart.setOnClickListener {
+            val h = prefs.getInt("quiet_start_hour", 22)
+            val m = prefs.getInt("quiet_start_minute", 0)
+            TimePickerDialog(this, { _, hour, minute ->
+                prefs.edit()
+                    .putInt("quiet_start_hour", hour)
+                    .putInt("quiet_start_minute", minute)
+                    .apply()
+                updateQuietHoursUI()
+            }, h, m, true).show()
+        }
+
+        binding.btnQuietEnd.setOnClickListener {
+            val h = prefs.getInt("quiet_end_hour", 6)
+            val m = prefs.getInt("quiet_end_minute", 0)
+            TimePickerDialog(this, { _, hour, minute ->
+                prefs.edit()
+                    .putInt("quiet_end_hour", hour)
+                    .putInt("quiet_end_minute", minute)
+                    .apply()
+                updateQuietHoursUI()
+            }, h, m, true).show()
+        }
     }
 
     private fun updateUI() {
@@ -261,6 +295,7 @@ class MainActivity : AppCompatActivity() {
         updateBatteryUI()
         updateBatteryMp3UI()
         updateAlarmUI()
+        updateQuietHoursUI()
     }
 
     private fun updateModeUI() {
@@ -292,6 +327,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun formatTime(hour: Int, minute: Int): String =
         String.format("%02d:%02d", hour, minute)
+
+    private fun updateQuietHoursUI() {
+        val enabled = prefs.getBoolean("quiet_hours_enabled", false)
+        val startH = prefs.getInt("quiet_start_hour", 22)
+        val startM = prefs.getInt("quiet_start_minute", 0)
+        val endH   = prefs.getInt("quiet_end_hour", 6)
+        val endM   = prefs.getInt("quiet_end_minute", 0)
+
+        binding.switchQuietHours.isChecked = enabled
+        binding.btnQuietStart.text = formatTime(startH, startM)
+        binding.btnQuietEnd.text   = formatTime(endH, endM)
+
+        // Làm mờ nút giờ khi switch đang tắt
+        val alpha = if (enabled) 1.0f else 0.4f
+        binding.btnQuietStart.alpha   = alpha
+        binding.btnQuietEnd.alpha     = alpha
+        binding.btnQuietStart.isEnabled = enabled
+        binding.btnQuietEnd.isEnabled   = enabled
+    }
 
     private fun updateMp3UI() {
         val uriStr = prefs.getString(MonitorService.PREF_MP3_URI, null)

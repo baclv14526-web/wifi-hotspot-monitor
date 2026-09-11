@@ -269,17 +269,47 @@ class MonitorService : Service() {
     // ── MP3 Player ───────────────────────────────────────────────────
 
     private fun playMp3() {
+        if (isQuietHours()) return  // Im lặng ban đêm — notification vẫn hiện, chỉ tắt âm
         val uriStr = getSharedPreferences("prefs", Context.MODE_PRIVATE)
             .getString(PREF_MP3_URI, null)
         playUriOrDefaultRingtone(uriStr)
     }
 
     private fun playBatteryMp3() {
-        // Ưu tiên file riêng cho pin, fallback về file hotspot, rồi chuông mặc định
+        if (isQuietHours()) return  // Im lặng ban đêm — notification vẫn hiện, chỉ tắt âm
         val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
         val uriStr = prefs.getString(PREF_BATTERY_MP3_URI, null)
             ?: prefs.getString(PREF_MP3_URI, null)
         playUriOrDefaultRingtone(uriStr)
+    }
+
+    /**
+     * Kiểm tra thời điểm hiện tại có nằm trong khung giờ im lặng ban đêm không.
+     * Hỗ trợ khung giờ vắt qua nửa đêm (ví dụ 22:00 – 06:00).
+     * Trả về false nếu người dùng chưa bật tính năng này.
+     */
+    private fun isQuietHours(): Boolean {
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("quiet_hours_enabled", false)) return false
+
+        val startH = prefs.getInt("quiet_start_hour", 22)
+        val startM = prefs.getInt("quiet_start_minute", 0)
+        val endH   = prefs.getInt("quiet_end_hour", 6)
+        val endM   = prefs.getInt("quiet_end_minute", 0)
+
+        val cal = java.util.Calendar.getInstance()
+        val nowMinutes  = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 +
+                          cal.get(java.util.Calendar.MINUTE)
+        val startMinutes = startH * 60 + startM
+        val endMinutes   = endH   * 60 + endM
+
+        return if (startMinutes <= endMinutes) {
+            // Khung giờ KHÔNG vắt qua nửa đêm (ví dụ 01:00 – 06:00)
+            nowMinutes in startMinutes until endMinutes
+        } else {
+            // Khung giờ vắt qua nửa đêm (ví dụ 22:00 – 06:00)
+            nowMinutes >= startMinutes || nowMinutes < endMinutes
+        }
     }
 
     /**
