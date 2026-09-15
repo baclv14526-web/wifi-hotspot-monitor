@@ -8,7 +8,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
-import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
@@ -53,9 +52,13 @@ class AlarmRingService : Service() {
         stopSound()
         playSound()
 
-        // Auto stop sau 60 giây
+        // Auto stop sau 60 giây — CHỈ dừng âm thanh hiện tại, KHÔNG hủy lịch
+        // kêu lại (lần 2, lần 3). Nếu người dùng không phản hồi trong 60 giây
+        // (ví dụ đang ngủ say), báo thức vẫn phải tự kêu lại theo đúng lịch —
+        // đây chính là mục đích của tính năng "3 lần trong 15 phút".
+        // Chỉ khi người dùng CHỦ ĐỘNG bấm "Dừng báo thức" (ACTION_STOP) mới hủy.
         autoStopRunnable?.let { handler.removeCallbacks(it) }
-        autoStopRunnable = Runnable { stopAlarm() }
+        autoStopRunnable = Runnable { stopAlarm(cancelFutureRings = false) }
         handler.postDelayed(autoStopRunnable!!, AUTO_STOP_MS)
 
         return START_NOT_STICKY

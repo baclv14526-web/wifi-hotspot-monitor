@@ -65,11 +65,21 @@ class AlarmClockReceiver : BroadcastReceiver() {
             val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             am.cancel(buildPendingIntent(context, REQ_MAIN, 0))
             cancelRemainingRings(context)
-            // Nếu đang kêu thì dừng luôn
+            // Nếu đang kêu thì dừng luôn — dùng startForegroundService để nhất
+            // quán với mọi nơi khác trong codebase (an toàn hơn nếu hàm này
+            // sau này được gọi từ ngữ cảnh không phải foreground Activity)
             val stopIntent = Intent(context, AlarmRingService::class.java).apply {
                 action = AlarmRingService.ACTION_STOP
             }
-            context.startService(stopIntent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(stopIntent)
+                } else {
+                    context.startService(stopIntent)
+                }
+            } catch (e: Exception) {
+                // Không sao nếu service không đang chạy — không có gì cần dừng
+            }
         }
 
         fun cancelRemainingRings(context: Context) {
