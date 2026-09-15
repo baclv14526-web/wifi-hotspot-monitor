@@ -55,10 +55,11 @@ class MonitorService : Service() {
         const val TRIGGER_SCHEDULE = "schedule"      // ScheduleReceiver kích hoạt kiểm tra 1 lần
         const val TRIGGER_SCHEDULE_MODE = "schedule_mode" // Chế độ lịch trình (chỉ giữ FG notification)
         const val DEFAULT_INTERVAL = 5
-        // Hotspot alert: tối đa 3 lần trong 15 phút (giống cảnh báo pin),
-        // mỗi lần cách nhau 4.5 phút, sau đó dừng hẳn đến khi hotspot bật lại
+        // Hotspot alert: tối đa 3 lần trong 15 phút, mỗi lần cách nhau 7 phút 30 giây
+        // (lần 1: 0 phút, lần 2: +7.5 phút, lần 3: +15 phút), sau đó dừng hẳn
+        // đến khi hotspot bật lại.
         const val HOTSPOT_MAX_RINGS  = 3
-        const val HOTSPOT_RING_INTERVAL_MS = 4 * 60 * 1000L + 30 * 1000L  // 4 phút 30 giây
+        const val HOTSPOT_RING_INTERVAL_MS = 7 * 60 * 1000L + 30 * 1000L  // 7 phút 30 giây
         const val PREF_MP3_URI = "mp3_uri"
         const val PREF_BATTERY_MP3_URI = "battery_mp3_uri"
         const val BATTERY_THRESHOLD = 20
@@ -177,14 +178,21 @@ class MonitorService : Service() {
      * - Lần 3 (+9 phút):      gửi alert cuối + phát nhạc + xóa notification sau 5 giây
      * Sau đó im lặng hoàn toàn cho đến khi hotspot bật lại.
      */
+    /**
+     * Bắt đầu chu kỳ cảnh báo Hotspot 3 lần trong 15 phút:
+     * - Lần 1 (0 phút):    gửi alert + phát nhạc
+     * - Lần 2 (+7.5 phút): gửi alert + phát nhạc
+     * - Lần 3 (+15 phút):  gửi alert cuối + phát nhạc + xóa notification sau 5 giây
+     * Sau đó im lặng hoàn toàn cho đến khi hotspot bật lại.
+     */
     private fun startHotspotRingCycle() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        // Lần 1 — ngay lập tức
+        // Lần 1 — ngay lập tức (0 phút)
         sendHotspotAlert(nm, ringIndex = 1, isFinal = false)
         playMp3()
 
-        // Lần 2 — sau 4.5 phút
+        // Lần 2 — sau 7.5 phút
         hotspotRing2Runnable = Runnable {
             if (hotspotRingStarted) {
                 sendHotspotAlert(nm, ringIndex = 2, isFinal = false)
@@ -192,7 +200,7 @@ class MonitorService : Service() {
             }
         }
 
-        // Lần 3 — sau 9 phút, rồi tắt hẳn
+        // Lần 3 — sau 15 phút (7.5 × 2), rồi tắt hẳn
         hotspotRing3Runnable = Runnable {
             if (hotspotRingStarted) {
                 sendHotspotAlert(nm, ringIndex = 3, isFinal = true)
