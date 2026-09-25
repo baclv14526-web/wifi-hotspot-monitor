@@ -88,12 +88,17 @@ class MonitorService : Service() {
         // Watchdog ping mỗi 15 phút để kiểm tra service còn sống không.
         WatchdogReceiver.start(this)
 
+        // Luôn hủy chu kỳ cảnh báo cũ (nếu có) khi service nhận lệnh mới —
+        // tránh trường hợp đổi chế độ giữa chừng (ví dụ từ Lịch trình sang
+        // Theo phút) mà chu kỳ 3 lần của chế độ cũ vẫn còn chạy ngầm.
+        cancelHotspotRingCycle()
+
         val trigger = intent?.getStringExtra(EXTRA_TRIGGER)
         val useSchedule = prefs.getBoolean("use_schedule", true)
 
         when {
             trigger == TRIGGER_SCHEDULE -> {
-                pollHotspot()
+                pollHotspot(isScheduleMode = true)
             }
             useSchedule || trigger == TRIGGER_SCHEDULE_MODE -> {
                 // Chỉ giữ foreground notification, AlarmManager lo phần lịch trình
@@ -133,7 +138,7 @@ class MonitorService : Service() {
         stopPolling()
         pollRunnable = object : Runnable {
             override fun run() {
-                pollHotspot()
+                pollHotspot(isScheduleMode = false)
                 handler.postDelayed(this, intervalMs)
             }
         }
@@ -146,19 +151,31 @@ class MonitorService : Service() {
         pollRunnable = null
     }
 
-    private fun pollHotspot() {
+    /**
+     * @param isScheduleMode true nếu được gọi từ chế độ Lịch trình (ScheduleReceiver),
+     *   false nếu được gọi từ chế độ Theo phút (polling loop).
+     *   - Lịch trình: giữ nguyên chu kỳ cảnh báo 3 lần trong 15 phút.
+     *   - Theo phút: chỉ thông báo 1 lần duy nhất, không lặp lại, cho đến khi
+     *     hotspot bật lại (theo đúng yêu cầu: "chỉ thông báo 1 lần rồi thôi").
+     */
+    private fun pollHotspot(isScheduleMode: Boolean) {
         val isOn = HotspotUtils.isEnabled(this)
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(FG_ID, buildFgNotification(isOn))
 
         when {
             !isOn -> {
-                // Hotspot đang TẮT: chỉ bắt đầu chu kỳ kêu khi chưa bắt đầu lần này
-                // (các lần poll tiếp theo trong khi hotspot vẫn tắt sẽ bị bỏ qua —
-                // ring cycle tự lên lịch bằng Handler, không phụ thuộc polling interval)
+                // Chỉ xử lý khi CHƯA từng cảnh báo cho lần tắt này —
+                // (các lần poll tiếp theo trong khi hotspot vẫn tắt sẽ bị bỏ qua)
                 if (!hotspotRingStarted) {
                     hotspotRingStarted = true
-                    startHotspotRingCycle()
+                    if (isScheduleMode) {
+                        startHotspotRingCycle()
+                    } else {
+                        // Chế độ theo phút: thông báo đúng 1 lần, không lặp lại
+                        sendHotspotAlertOnce(nm)
+                        playMp3()
+                    }
                 }
             }
             isOn -> {
@@ -494,6 +511,49 @@ class MonitorService : Service() {
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .build()
+    }
+
+    /**
+     * Gửi cảnh báo Hotspot đúng 1 lần cho chế độ Theo phút — không đánh số
+     * "lần X/3" vì sẽ không có lần kêu lại nào cả. Notification vẫn hiển thị
+     * cho đến khi hotspot bật lại (không tự xóa sau vài giây như bản Lịch trình).
+     */
+    private fun sendHotspotAlertOnce(nm: NotificationManager) {
+        val pi = PendingIntent.getActivity(
+            this, 10,
+            Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val hasMp3 = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+            .getString(PREF_MP3_URI, null) != null
+        val quietNow = isQuietHours()
+
+        nm.notify(ALERT_ID, NotificationCompat.Builder(this, CH_ALERT)
+            .setContentTitle("⚠️ Hotspot WiFi đã bị tắt!")
+            .setContentText(
+                when {
+                    quietNow -> "🌙 Im lặng ban đêm — không kêu chuông"
+                    hasMp3   -> "🎵 Đang phát nhạc cảnh báo..."
+                    else     -> "Nhấn để vào cài đặt bật lại Hotspot."
+                }
+            )
+            .setStyle(NotificationCompat.BigTextStyle().bigText(
+                "Hotspot WiFi đang TẮT.\nNhấn \"Bật Hotspot\" để vào cài đặt và bật lại ngay."
+            ))
+            .setSmallIcon(R.drawable.ic_wifi_notify)
+            .setContentIntent(pi)
+            .addAction(android.R.drawable.ic_menu_preferences, "Bật Hotspot", pi)
+            .setAutoCancel(false)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(false)
+            .setSilent(true)
+            .setVibrate(longArrayOf(0, 400, 200, 400))
+            .build()
+        )
     }
 
     private fun sendHotspotAlert(nm: NotificationManager, ringIndex: Int, isFinal: Boolean) {
