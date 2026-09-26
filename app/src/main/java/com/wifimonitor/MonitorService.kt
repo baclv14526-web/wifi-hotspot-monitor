@@ -366,8 +366,8 @@ class MonitorService : Service() {
      */
     private fun currentBatteryStatus(): Pair<Int, Boolean>? {
         return try {
-            val bm = getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
-            val percent = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            val bm = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+            val percent = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
             if (percent < 0) return null
             val isCharging = bm.isCharging
             percent to isCharging
@@ -378,7 +378,6 @@ class MonitorService : Service() {
 
     private fun doOneBatteryRing(percent: Int, ringIndex: Int) {
         batteryRingCount = ringIndex
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         sendBatteryAlert(percent, ringIndex)
         playBatteryMp3()
     }
