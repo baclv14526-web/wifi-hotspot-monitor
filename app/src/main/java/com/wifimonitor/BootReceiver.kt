@@ -13,6 +13,11 @@ class BootReceiver : BroadcastReceiver() {
 
         val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
 
+        // Sau reboot, trạng thái chu kỳ cảnh báo lưu từ trước là DỮ LIỆU CŨ: hotspot
+        // luôn tắt sau khởi động nên nếu giữ cờ "đã báo" thì sẽ im lặng sai, còn mốc
+        // thời gian thì không còn ý nghĩa. Xóa sạch để bắt đầu mới.
+        MonitorService.clearPersistedState(context)
+
         // Khôi phục báo thức nếu đã bật — độc lập với cài đặt auto_start của Hotspot monitor
         AlarmClockReceiver.restoreIfEnabled(context)
 

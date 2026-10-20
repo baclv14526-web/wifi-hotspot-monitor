@@ -67,11 +67,46 @@ class MonitorService : Service() {
         // Cảnh báo pin: kêu tối đa 3 lần, mỗi lần cách nhau 4.5 phút (tổng 9 phút)
         const val BATTERY_MAX_RINGS = 3
         const val BATTERY_RING_INTERVAL_MS = 4 * 60 * 1000L + 30 * 1000L  // 4 phút 30 giây
+
+        // Trạng thái chu kỳ cảnh báo được lưu bền vững để khi service bị OS kill
+        // giữa chừng (Handler.postDelayed trong bộ nhớ mất trắng), lần khởi động
+        // lại (Watchdog / START_STICKY) tự khôi phục đúng vị trí trong chu kỳ.
+        private const val PREF_HOTSPOT_RING_ACTIVE = "hotspot_ring_active"
+        private const val PREF_HOTSPOT_RING_START_MS = "hotspot_ring_start_ms"
+        private const val PREF_HOTSPOT_ALERTED_ONCE = "hotspot_alerted_once"
+        private const val PREF_BATTERY_RING_ACTIVE = "battery_ring_active"
+        private const val PREF_BATTERY_RING_START_MS = "battery_ring_start_ms"
+        private const val PREF_BATTERY_ALERT_SENT = "battery_alert_sent"
+        private const val PREF_LAST_MODE = "monitor_last_mode"
+        private const val MODE_INTERVAL = 0
+        private const val MODE_SCHEDULE = 1
+
+        /**
+         * Gọi khi người dùng CHỦ ĐỘNG bấm "Dừng giám sát" — xóa sạch trạng thái
+         * chu kỳ bền vững để lần bật sau bắt đầu sạch, không bị khôi phục nhầm.
+         * (onDestroy() cố ý KHÔNG xóa vì không phân biệt được OS kill hay người dùng dừng.)
+         */
+        fun clearPersistedState(context: Context) {
+            context.getSharedPreferences("prefs", Context.MODE_PRIVATE).edit()
+                .remove(PREF_HOTSPOT_RING_ACTIVE)
+                .remove(PREF_HOTSPOT_RING_START_MS)
+                .remove(PREF_HOTSPOT_ALERTED_ONCE)
+                .remove(PREF_BATTERY_RING_ACTIVE)
+                .remove(PREF_BATTERY_RING_START_MS)
+                .remove(PREF_BATTERY_ALERT_SENT)
+                .remove(PREF_LAST_MODE)
+                .apply()
+        }
     }
 
     override fun onCreate() {
         super.onCreate()
         createChannels()
+        // QUAN TRỌNG: khôi phục TRƯỚC registerBatteryReceiver(). ACTION_BATTERY_CHANGED
+        // là sticky broadcast — onReceive() chạy ngay lúc đăng ký; nếu chưa khôi phục
+        // batteryAlertSent thì sẽ bắt đầu một chu kỳ mới trùng lặp.
+        restoreHotspotStateIfNeeded()
+        restoreBatteryStateIfNeeded()
         registerBatteryReceiver()
     }
 
@@ -88,13 +123,19 @@ class MonitorService : Service() {
         // Watchdog ping mỗi 15 phút để kiểm tra service còn sống không.
         WatchdogReceiver.start(this)
 
-        // Luôn hủy chu kỳ cảnh báo cũ (nếu có) khi service nhận lệnh mới —
-        // tránh trường hợp đổi chế độ giữa chừng (ví dụ từ Lịch trình sang
-        // Theo phút) mà chu kỳ 3 lần của chế độ cũ vẫn còn chạy ngầm.
-        cancelHotspotRingCycle()
-
         val trigger = intent?.getStringExtra(EXTRA_TRIGGER)
         val useSchedule = prefs.getBoolean("use_schedule", true)
+
+        // Chỉ hủy chu kỳ cũ khi ĐỔI CHẾ ĐỘ thật sự (Lịch trình <-> Theo phút), hoặc
+        // khi ScheduleReceiver kích hoạt một lần kiểm tra mới (cần chu kỳ mới tinh).
+        // KHÔNG hủy vô điều kiện: khi Watchdog/START_STICKY khởi động lại service,
+        // chu kỳ vừa được khôi phục trong onCreate() phải được giữ nguyên.
+        val newMode = if (trigger == TRIGGER_SCHEDULE || trigger == TRIGGER_SCHEDULE_MODE || useSchedule)
+            MODE_SCHEDULE else MODE_INTERVAL
+        val lastMode = prefs.getInt(PREF_LAST_MODE, -1)
+        if (lastMode != -1 && lastMode != newMode) cancelHotspotRingCycle()
+        prefs.edit().putInt(PREF_LAST_MODE, newMode).apply()
+        if (trigger == TRIGGER_SCHEDULE) cancelHotspotRingCycle()
 
         when {
             trigger == TRIGGER_SCHEDULE -> {
@@ -124,7 +165,7 @@ class MonitorService : Service() {
             WatchdogReceiver.stop(this)
         }
         stopPolling()
-        cancelHotspotRingCycle()
+        cancelHotspotRingCycle(clearPersisted = false)
         stopMp3()
         unregisterBatteryReceiver()
         super.onDestroy()
@@ -175,6 +216,8 @@ class MonitorService : Service() {
                         // Chế độ theo phút: thông báo đúng 1 lần, không lặp lại
                         sendHotspotAlertOnce(nm)
                         playMp3()
+                        getSharedPreferences("prefs", Context.MODE_PRIVATE).edit()
+                            .putBoolean(PREF_HOTSPOT_ALERTED_ONCE, true).apply()
                     }
                 }
             }
@@ -195,19 +238,25 @@ class MonitorService : Service() {
      * - Lần 3 (+15 phút):  gửi alert cuối + phát nhạc + xóa notification sau 5 giây
      * Mỗi lần kêu lại (2, 3) đều kiểm tra lại HotspotUtils.isEnabled() trước khi
      * kêu — nếu hotspot đã được bật lại giữa chừng thì hủy luôn, không kêu nhầm.
-     * Sau khi hoàn tất 3 lần, im lặng hoàn toàn cho đến khi hotspot bật lại.
+     * Thời điểm bắt đầu được lưu bền vững để khôi phục nếu service bị kill.
      */
     private fun startHotspotRingCycle() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        getSharedPreferences("prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean(PREF_HOTSPOT_RING_ACTIVE, true)
+            .putLong(PREF_HOTSPOT_RING_START_MS, System.currentTimeMillis())
+            .apply()
 
         // Lần 1 — ngay lập tức (0 phút)
         sendHotspotAlert(nm, ringIndex = 1, isFinal = false)
         playMp3()
 
-        // Lần 2 — sau 7.5 phút. FIX QUAN TRỌNG: re-check HotspotUtils.isEnabled()
-        // ngay trước khi kêu — trong chế độ Lịch trình không có polling liên tục,
-        // nếu người dùng đã tự bật lại Hotspot giữa chừng, không có gì hủy chu kỳ
-        // này trừ khi kiểm tra lại tại đây. Nếu đã bật lại thì hủy toàn bộ chu kỳ.
+        scheduleHotspotRing2(nm, HOTSPOT_RING_INTERVAL_MS)
+        scheduleHotspotRing3(nm, HOTSPOT_RING_INTERVAL_MS * 2)
+    }
+
+    private fun scheduleHotspotRing2(nm: NotificationManager, delayMs: Long) {
         hotspotRing2Runnable = Runnable {
             if (hotspotRingStarted) {
                 if (HotspotUtils.isEnabled(this)) {
@@ -219,8 +268,10 @@ class MonitorService : Service() {
                 }
             }
         }
+        handler.postDelayed(hotspotRing2Runnable!!, delayMs.coerceAtLeast(0L))
+    }
 
-        // Lần 3 — sau 15 phút (7.5 × 2). Cũng re-check tương tự.
+    private fun scheduleHotspotRing3(nm: NotificationManager, delayMs: Long) {
         hotspotRing3Runnable = Runnable {
             if (hotspotRingStarted) {
                 if (HotspotUtils.isEnabled(this)) {
@@ -230,24 +281,85 @@ class MonitorService : Service() {
                     sendHotspotAlert(nm, ringIndex = 3, isFinal = true)
                     playMp3()
                     handler.postDelayed({ nm.cancel(ALERT_ID) }, 5000L)
-                    // LƯU Ý: KHÔNG reset hotspotRingStarted = false ở đây.
-                    // Phải giữ nguyên true để im lặng hoàn toàn cho đến khi
-                    // hotspot thực sự bật lại (pollHotspot() phát hiện isOn=true
-                    // sẽ tự gọi cancelHotspotRingCycle() để reset đúng lúc).
+                    // Chu kỳ hoàn tất tự nhiên: xóa cờ "đang chạy" bền vững, nhưng
+                    // GIỮ hotspotRingStarted = true để im lặng đến khi hotspot bật lại
+                    // (pollHotspot() thấy isOn sẽ tự gọi cancelHotspotRingCycle()).
+                    getSharedPreferences("prefs", Context.MODE_PRIVATE).edit()
+                        .putBoolean(PREF_HOTSPOT_RING_ACTIVE, false)
+                        .apply()
                 }
             }
         }
-
-        handler.postDelayed(hotspotRing2Runnable!!, HOTSPOT_RING_INTERVAL_MS)
-        handler.postDelayed(hotspotRing3Runnable!!, HOTSPOT_RING_INTERVAL_MS * 2)
+        handler.postDelayed(hotspotRing3Runnable!!, delayMs.coerceAtLeast(0L))
     }
 
-    private fun cancelHotspotRingCycle() {
+    /**
+     * Khôi phục trạng thái cảnh báo Hotspot nếu service vừa bị OS kill giữa chừng.
+     * - Chế độ Lịch trình: đặt lại lần 2/3 theo mốc thời gian TUYỆT ĐỐI tính từ lúc
+     *   chu kỳ bắt đầu ban đầu (tổng vẫn đúng 15 phút, không bị kéo dài do restart).
+     * - Chế độ Theo phút: nhớ là đã báo 1 lần, tránh báo trùng cho cùng 1 lần tắt.
+     * Luôn re-check trạng thái thực tế; nếu hotspot đã bật lại thì dọn sạch.
+     */
+    private fun restoreHotspotStateIfNeeded() {
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        val active = prefs.getBoolean(PREF_HOTSPOT_RING_ACTIVE, false)
+        val alertedOnce = prefs.getBoolean(PREF_HOTSPOT_ALERTED_ONCE, false)
+        if (!active && !alertedOnce) return
+
+        if (HotspotUtils.isEnabled(this)) {
+            prefs.edit()
+                .putBoolean(PREF_HOTSPOT_RING_ACTIVE, false)
+                .putBoolean(PREF_HOTSPOT_ALERTED_ONCE, false)
+                .apply()
+            return
+        }
+
+        hotspotRingStarted = true  // chặn pollHotspot() báo trùng cho lần tắt này
+        if (!active) return
+
+        val startMs = prefs.getLong(PREF_HOTSPOT_RING_START_MS, 0L)
+        val elapsed = System.currentTimeMillis() - startMs
+        // elapsed < 0: đồng hồ hệ thống bị chỉnh lùi → dữ liệu không còn đáng tin
+        if (startMs <= 0L || elapsed < 0L) {
+            prefs.edit().putBoolean(PREF_HOTSPOT_RING_ACTIVE, false).apply()
+            return
+        }
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        when {
+            elapsed < HOTSPOT_RING_INTERVAL_MS -> {
+                scheduleHotspotRing2(nm, HOTSPOT_RING_INTERVAL_MS - elapsed)
+                scheduleHotspotRing3(nm, HOTSPOT_RING_INTERVAL_MS * 2 - elapsed)
+            }
+            elapsed < HOTSPOT_RING_INTERVAL_MS * 2 -> {
+                // Lần 2 coi như bị lỡ do service chết đúng lúc → bù ngay, rồi hẹn lần 3
+                sendHotspotAlert(nm, ringIndex = 2, isFinal = false)
+                playMp3()
+                scheduleHotspotRing3(nm, HOTSPOT_RING_INTERVAL_MS * 2 - elapsed)
+            }
+            else -> {
+                // Đã quá hạn cả lần 3 (restart quá trễ) → không bù nữa, chỉ dọn cờ
+                prefs.edit().putBoolean(PREF_HOTSPOT_RING_ACTIVE, false).apply()
+            }
+        }
+    }
+
+    /**
+     * @param clearPersisted true (mặc định) khi chu kỳ kết thúc thật sự (hotspot bật
+     *   lại, đổi chế độ...). false khi gọi từ onDestroy() để giữ lại dữ liệu khôi phục.
+     */
+    private fun cancelHotspotRingCycle(clearPersisted: Boolean = true) {
         hotspotRingStarted = false
         hotspotRing2Runnable?.let { handler.removeCallbacks(it) }
         hotspotRing3Runnable?.let { handler.removeCallbacks(it) }
         hotspotRing2Runnable = null
         hotspotRing3Runnable = null
+        if (clearPersisted) {
+            getSharedPreferences("prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean(PREF_HOTSPOT_RING_ACTIVE, false)
+                .putBoolean(PREF_HOTSPOT_ALERTED_ONCE, false)
+                .apply()
+        }
     }
 
     // ── Battery Receiver ─────────────────────────────────────────────
@@ -277,8 +389,9 @@ class MonitorService : Service() {
                         batteryRingCount = 0
                         startBatteryRingCycle(percent)
                     }
-                } else if (percent > threshold || isCharging) {
-                    // Pin đã sạc lên / đang sạc → reset hoàn toàn để báo lại lần sau
+                } else if (percent > threshold || isCharging || !alertEnabled) {
+                    // Pin đã sạc lên / đang sạc / người dùng đã TẮT cảnh báo pin →
+                    // reset hoàn toàn để báo lại lần sau (kể cả khi bật lại lúc pin còn thấp)
                     cancelBatteryRingCycle()
                     batteryAlertSent = false
                     nm.cancel(BATTERY_ALERT_ID)
@@ -300,7 +413,7 @@ class MonitorService : Service() {
     }
 
     private fun unregisterBatteryReceiver() {
-        cancelBatteryRingCycle()
+        cancelBatteryRingCycle(clearPersisted = false)
         try { batteryReceiver?.let { unregisterReceiver(it) } } catch (e: Exception) { }
         batteryReceiver = null
     }
@@ -311,53 +424,105 @@ class MonitorService : Service() {
      * - Lần 2: sau 4 phút 30 giây
      * - Lần 3: sau 9 phút (4.5 + 4.5)
      * - Sau lần 3: xóa notification, không kêu nữa cho đến khi pin sạc lên rồi xuống lại
+     * Thời điểm bắt đầu được lưu bền vững để khôi phục nếu service bị kill.
      */
     private fun startBatteryRingCycle(percent: Int) {
-        // Lần 1 — ngay lập tức
+        getSharedPreferences("prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean(PREF_BATTERY_RING_ACTIVE, true)
+            .putBoolean(PREF_BATTERY_ALERT_SENT, true)
+            .putLong(PREF_BATTERY_RING_START_MS, System.currentTimeMillis())
+            .apply()
+
         doOneBatteryRing(percent, ringIndex = 1)
 
-        // Lần 2 — sau 4.5 phút. FIX QUAN TRỌNG: re-check % pin và trạng thái sạc
-        // MỚI NHẤT ngay trước khi kêu — tránh dùng % pin cũ đã lỗi thời (ví dụ
-        // hiện "còn 18%" trong khi thực tế pin đã tụt xuống 12% hoặc đã cắm sạc).
+        scheduleBatteryRing2(BATTERY_RING_INTERVAL_MS)
+        scheduleBatteryRing3(BATTERY_RING_INTERVAL_MS * 2)
+    }
+
+    /**
+     * Re-check % pin + trạng thái sạc MỚI NHẤT. Nếu đã hồi phục (cắm sạc hoặc
+     * lên trên ngưỡng) hoặc không đọc được → hủy toàn bộ chu kỳ, trả về null.
+     * Ngược lại trả về % pin hiện tại để hiển thị (không dùng giá trị cũ).
+     */
+    private fun checkBatteryStillLowOrCancel(): Int? {
+        val threshold = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+            .getInt("battery_threshold", BATTERY_THRESHOLD)
+        val current = currentBatteryStatus()
+        if (current == null || current.second || current.first > threshold) {
+            cancelBatteryRingCycle()
+            batteryAlertSent = false
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.cancel(BATTERY_ALERT_ID)
+            return null
+        }
+        return current.first
+    }
+
+    private fun scheduleBatteryRing2(delayMs: Long) {
         batteryRing2Runnable = Runnable {
             if (batteryAlertSent) {
-                val threshold = getSharedPreferences("prefs", Context.MODE_PRIVATE)
-                    .getInt("battery_threshold", BATTERY_THRESHOLD)
-                val current = currentBatteryStatus()
-                if (current == null || current.second || current.first > threshold) {
-                    // Không đọc được pin, đã cắm sạc, hoặc pin đã hồi lên trên ngưỡng → hủy
-                    cancelBatteryRingCycle()
-                    batteryAlertSent = false
-                    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    nm.cancel(BATTERY_ALERT_ID)
-                } else {
-                    doOneBatteryRing(current.first, ringIndex = 2)
-                }
+                checkBatteryStillLowOrCancel()?.let { doOneBatteryRing(it, ringIndex = 2) }
             }
         }
-        // Lần 3 — sau 9 phút, rồi tắt hẳn notification. Cũng re-check tương tự.
+        handler.postDelayed(batteryRing2Runnable!!, delayMs.coerceAtLeast(0L))
+    }
+
+    private fun scheduleBatteryRing3(delayMs: Long) {
         batteryRing3Runnable = Runnable {
             if (batteryAlertSent) {
-                val threshold = getSharedPreferences("prefs", Context.MODE_PRIVATE)
-                    .getInt("battery_threshold", BATTERY_THRESHOLD)
-                val current = currentBatteryStatus()
-                if (current == null || current.second || current.first > threshold) {
-                    cancelBatteryRingCycle()
-                    batteryAlertSent = false
-                    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    nm.cancel(BATTERY_ALERT_ID)
-                } else {
-                    doOneBatteryRing(current.first, ringIndex = 3)
+                checkBatteryStillLowOrCancel()?.let { percent ->
+                    doOneBatteryRing(percent, ringIndex = 3)
                     handler.postDelayed({
                         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                         nm.cancel(BATTERY_ALERT_ID)
                     }, 5000L)
+                    // Hoàn tất tự nhiên: xóa cờ "đang chạy", giữ batteryAlertSent = true
+                    // (và cờ bền vững PREF_BATTERY_ALERT_SENT) để im lặng đến khi sạc.
+                    getSharedPreferences("prefs", Context.MODE_PRIVATE).edit()
+                        .putBoolean(PREF_BATTERY_RING_ACTIVE, false)
+                        .apply()
                 }
             }
         }
+        handler.postDelayed(batteryRing3Runnable!!, delayMs.coerceAtLeast(0L))
+    }
 
-        handler.postDelayed(batteryRing2Runnable!!, BATTERY_RING_INTERVAL_MS)
-        handler.postDelayed(batteryRing3Runnable!!, BATTERY_RING_INTERVAL_MS * 2)
+    /**
+     * Khôi phục trạng thái cảnh báo pin nếu service vừa bị OS kill giữa chừng.
+     * Phải chạy TRƯỚC registerBatteryReceiver() (xem onCreate).
+     */
+    private fun restoreBatteryStateIfNeeded() {
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        val active = prefs.getBoolean(PREF_BATTERY_RING_ACTIVE, false)
+        val sent = prefs.getBoolean(PREF_BATTERY_ALERT_SENT, false)
+        if (!active && !sent) return
+
+        batteryAlertSent = true  // sticky broadcast sẽ không coi đây là sự kiện pin yếu mới
+        if (!active) return
+
+        val startMs = prefs.getLong(PREF_BATTERY_RING_START_MS, 0L)
+        val elapsed = System.currentTimeMillis() - startMs
+        if (startMs <= 0L || elapsed < 0L) {
+            prefs.edit().putBoolean(PREF_BATTERY_RING_ACTIVE, false).apply()
+            return
+        }
+
+        when {
+            elapsed < BATTERY_RING_INTERVAL_MS -> {
+                scheduleBatteryRing2(BATTERY_RING_INTERVAL_MS - elapsed)
+                scheduleBatteryRing3(BATTERY_RING_INTERVAL_MS * 2 - elapsed)
+            }
+            elapsed < BATTERY_RING_INTERVAL_MS * 2 -> {
+                // Lần 2 bị lỡ → bù ngay nếu pin vẫn thấp, rồi hẹn lần 3
+                checkBatteryStillLowOrCancel()?.let { percent ->
+                    doOneBatteryRing(percent, ringIndex = 2)
+                    scheduleBatteryRing3(BATTERY_RING_INTERVAL_MS * 2 - elapsed)
+                }
+            }
+            else -> {
+                prefs.edit().putBoolean(PREF_BATTERY_RING_ACTIVE, false).apply()
+            }
+        }
     }
 
     /**
@@ -382,12 +547,18 @@ class MonitorService : Service() {
         playBatteryMp3()
     }
 
-    private fun cancelBatteryRingCycle() {
+    private fun cancelBatteryRingCycle(clearPersisted: Boolean = true) {
         batteryRing2Runnable?.let { handler.removeCallbacks(it) }
         batteryRing3Runnable?.let { handler.removeCallbacks(it) }
         batteryRing2Runnable = null
         batteryRing3Runnable = null
         batteryRingCount = 0
+        if (clearPersisted) {
+            getSharedPreferences("prefs", Context.MODE_PRIVATE).edit()
+                .putBoolean(PREF_BATTERY_RING_ACTIVE, false)
+                .putBoolean(PREF_BATTERY_ALERT_SENT, false)
+                .apply()
+        }
     }
 
     // ── MP3 Player ───────────────────────────────────────────────────

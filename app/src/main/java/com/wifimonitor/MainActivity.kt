@@ -451,6 +451,9 @@ class MainActivity : AppCompatActivity() {
     private fun stopMonitor() {
         // Dừng watchdog TRƯỚC khi stop service để tránh watchdog restart service lại
         WatchdogReceiver.stop(this)
+        // Xóa trạng thái chu kỳ cảnh báo bền vững — người dùng chủ động dừng nên
+        // lần bật sau phải bắt đầu sạch, không được khôi phục chu kỳ cũ.
+        MonitorService.clearPersistedState(this)
         stopService(Intent(this, MonitorService::class.java))
         ScheduleReceiver.cancelDailySchedule(this)
         setToggleUI(running = false)
