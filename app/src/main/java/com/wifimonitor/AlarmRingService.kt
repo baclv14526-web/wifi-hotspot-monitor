@@ -32,6 +32,11 @@ class AlarmRingService : Service() {
         const val PREF_ALARM_MP3_URI = "alarm_mp3_uri"
         const val TOTAL_RINGS = 3
         private const val AUTO_STOP_MS = 60_000L // tự dừng sau 60 giây nếu người dùng không phản hồi
+
+        /** true khi service đang kêu — để nơi khác không phải bật service chỉ để dừng nó. */
+        @Volatile
+        var ringing = false
+            private set
     }
 
     override fun onCreate() {
@@ -41,12 +46,17 @@ class AlarmRingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // Service có thể vừa được bật bằng startForegroundService() — Android 8+
+            // bắt buộc gọi startForeground() kể cả khi chỉ để dừng, nếu không sẽ crash
+            // (ForegroundServiceDidNotStartInTimeException).
+            startForeground(NOTIF_ID, buildNotification(0))
             stopAlarm()
             return START_NOT_STICKY
         }
 
         val ringIndex = intent?.getIntExtra(EXTRA_RING_INDEX, 0) ?: 0
         startForeground(NOTIF_ID, buildNotification(ringIndex))
+        ringing = true
 
         // Dừng bất kỳ âm thanh cũ nào trước khi phát mới
         stopSound()
@@ -65,6 +75,7 @@ class AlarmRingService : Service() {
     }
 
     override fun onDestroy() {
+        ringing = false
         autoStopRunnable?.let { handler.removeCallbacks(it) }
         stopSound()
         super.onDestroy()
