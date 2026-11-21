@@ -28,7 +28,7 @@ class MonitorService : Service() {
     private var lastHotspotOn: Boolean? = null
     private var mediaPlayer: MediaPlayer? = null
 
-    // Hotspot alert ring cycle (3 lần / 15 phút)
+    // Hotspot alert ring cycle (3 lần / 10 phút)
     private var hotspotRingStarted = false       // đã bắt đầu chu kỳ kêu chưa
     private var hotspotRing2Runnable: Runnable? = null
     private var hotspotRing3Runnable: Runnable? = null
@@ -55,11 +55,11 @@ class MonitorService : Service() {
         const val TRIGGER_SCHEDULE = "schedule"      // ScheduleReceiver kích hoạt kiểm tra 1 lần
         const val TRIGGER_SCHEDULE_MODE = "schedule_mode" // Chế độ lịch trình (chỉ giữ FG notification)
         const val DEFAULT_INTERVAL = 5
-        // Hotspot alert: tối đa 3 lần trong 15 phút, mỗi lần cách nhau 7 phút 30 giây
-        // (lần 1: 0 phút, lần 2: +7.5 phút, lần 3: +15 phút), sau đó dừng hẳn
+        // Hotspot alert: tối đa 3 lần trong 10 phút, mỗi lần cách nhau 5 phút
+        // (lần 1: 0 phút, lần 2: +5 phút, lần 3: +10 phút), sau đó dừng hẳn
         // đến khi hotspot bật lại.
         const val HOTSPOT_MAX_RINGS  = 3
-        const val HOTSPOT_RING_INTERVAL_MS = 7 * 60 * 1000L + 30 * 1000L  // 7 phút 30 giây
+        const val HOTSPOT_RING_INTERVAL_MS = 5 * 60 * 1000L  // 5 phút
         const val PREF_MP3_URI = "mp3_uri"
         const val PREF_BATTERY_MP3_URI = "battery_mp3_uri"
         const val BATTERY_THRESHOLD = 20
@@ -195,7 +195,7 @@ class MonitorService : Service() {
     /**
      * @param isScheduleMode true nếu được gọi từ chế độ Lịch trình (ScheduleReceiver),
      *   false nếu được gọi từ chế độ Theo phút (polling loop).
-     *   - Lịch trình: giữ nguyên chu kỳ cảnh báo 3 lần trong 15 phút.
+     *   - Lịch trình: chu kỳ cảnh báo 3 lần trong 10 phút.
      *   - Theo phút: chỉ thông báo 1 lần duy nhất, không lặp lại, cho đến khi
      *     hotspot bật lại (theo đúng yêu cầu: "chỉ thông báo 1 lần rồi thôi").
      */
@@ -232,10 +232,10 @@ class MonitorService : Service() {
     }
 
     /**
-     * Bắt đầu chu kỳ cảnh báo Hotspot 3 lần trong 15 phút:
+     * Bắt đầu chu kỳ cảnh báo Hotspot 3 lần trong 10 phút:
      * - Lần 1 (0 phút):    gửi alert + phát nhạc
-     * - Lần 2 (+7.5 phút): gửi alert + phát nhạc (có re-check trạng thái)
-     * - Lần 3 (+15 phút):  gửi alert cuối + phát nhạc + xóa notification sau 5 giây
+     * - Lần 2 (+5 phút):   gửi alert + phát nhạc (có re-check trạng thái)
+     * - Lần 3 (+10 phút):  gửi alert cuối + phát nhạc + xóa notification sau 5 giây
      * Mỗi lần kêu lại (2, 3) đều kiểm tra lại HotspotUtils.isEnabled() trước khi
      * kêu — nếu hotspot đã được bật lại giữa chừng thì hủy luôn, không kêu nhầm.
      * Thời điểm bắt đầu được lưu bền vững để khôi phục nếu service bị kill.
@@ -296,7 +296,7 @@ class MonitorService : Service() {
     /**
      * Khôi phục trạng thái cảnh báo Hotspot nếu service vừa bị OS kill giữa chừng.
      * - Chế độ Lịch trình: đặt lại lần 2/3 theo mốc thời gian TUYỆT ĐỐI tính từ lúc
-     *   chu kỳ bắt đầu ban đầu (tổng vẫn đúng 15 phút, không bị kéo dài do restart).
+     *   chu kỳ bắt đầu ban đầu (tổng vẫn đúng 10 phút, không bị kéo dài do restart).
      * - Chế độ Theo phút: nhớ là đã báo 1 lần, tránh báo trùng cho cùng 1 lần tắt.
      * Luôn re-check trạng thái thực tế; nếu hotspot đã bật lại thì dọn sạch.
      */
@@ -739,7 +739,7 @@ class MonitorService : Service() {
         else
             "⚠️ Hotspot WiFi đã bị tắt! ($ringIndex/$HOTSPOT_MAX_RINGS)"
         val body = if (isFinal)
-            "Đã cảnh báo $HOTSPOT_MAX_RINGS lần trong 15 phút. Thông báo tự xóa sau 5 giây."
+            "Đã cảnh báo $HOTSPOT_MAX_RINGS lần trong 10 phút. Thông báo tự xóa sau 5 giây."
         else
             "Hotspot WiFi đang TẮT.\nNhấn \"Bật Hotspot\" để vào cài đặt và bật lại ngay."
         val hasMp3 = getSharedPreferences("prefs", Context.MODE_PRIVATE)
