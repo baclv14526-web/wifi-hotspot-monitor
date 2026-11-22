@@ -28,7 +28,7 @@ class WatchdogReceiver : BroadcastReceiver() {
         val prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE)
 
         // Chỉ watchdog khi người dùng đã bật giám sát
-        if (!prefs.getBoolean("has_ever_started", false)) return
+        if (!prefs.getBoolean("monitoring_enabled", false)) return
         if (!prefs.getBoolean("auto_start", true)) return
 
         if (!MonitorService.running) {

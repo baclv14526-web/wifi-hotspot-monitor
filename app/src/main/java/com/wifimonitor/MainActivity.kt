@@ -420,7 +420,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun startMonitor() {
         try {
-            prefs.edit().putBoolean("has_ever_started", true).apply()
+            // Cờ "ĐANG BẬT giám sát" — BootReceiver/Watchdog dựa vào cờ này để quyết
+            // định có tự chạy lại sau reboot hay không. Bật khi Bắt đầu, tắt khi Dừng.
+            prefs.edit().putBoolean("monitoring_enabled", true).apply()
             if (useSchedule) {
                 ScheduleReceiver.setupDailySchedule(this)
                 val si = Intent(this, MonitorService::class.java).apply {
@@ -443,12 +445,16 @@ class MainActivity : AppCompatActivity() {
             setToggleUI(running = true)
             Toast.makeText(this, "Đã bắt đầu giám sát", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
+            prefs.edit().putBoolean("monitoring_enabled", false).apply()
             setToggleUI(running = false)
             Toast.makeText(this, "Không thể bắt đầu: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
     private fun stopMonitor() {
+        // Tắt cờ "đang bật" ĐẦU TIÊN — người dùng chủ động dừng thì sau reboot
+        // app tuyệt đối không được tự chạy lại giám sát.
+        prefs.edit().putBoolean("monitoring_enabled", false).apply()
         // Dừng watchdog TRƯỚC khi stop service để tránh watchdog restart service lại
         WatchdogReceiver.stop(this)
         // Xóa trạng thái chu kỳ cảnh báo bền vững — người dùng chủ động dừng nên
